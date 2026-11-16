@@ -1,0 +1,223 @@
+// Контракт API «Календарь звонков».
+// Цепочка: TypeSpec -> (tsp compile) -> OpenAPI 3 -> (openapi-typescript) ->
+// типы/клиент SDK фронтенда (frontend/src/api/schema.d.ts).
+// Синхронизировано с backend/main.go и backend/store.go.
+
+import "@typespec/http";
+import "@typespec/rest";
+import "@typespec/openapi3";
+
+using TypeSpec.Http;
+using TypeSpec.Rest;
+
+@service(#{ title: "Календарь звонков API" })
+@doc("Бронирование временны́х интервалов встреч. Хранилище — память Go-структур.")
+namespace CalendarApi;
+
+// --- Общие типы ---
+
+@doc("Тело ошибки API")
+model ErrorBody {
+  error: string;
+}
+
+@error
+model ApiError<Code extends int32 = 400> {
+  @statusCode code: Code;
+  @body body: ErrorBody;
+}
+
+@doc("Границы рабочего дня 'HH:MM'")
+model WorkHours {
+  workStart: plainTime;
+  workEnd: plainTime;
+}
+
+@doc("Границы рабочего дня, сопоставленные с парой (email создателя, дата)")
+model WorkHoursView extends WorkHours {
+  owner: string;
+  date: plainDate;
+}
+
+@doc("Запись на встречу")
+model Meeting {
+  @key id: string;
+  name: string;
+  description: string;
+
+  @doc("Длительность интервала в минутах")
+  durationMin: int32;
+
+  @doc("Email создателя: по нему проверяется занятость во всех его встречах")
+  ownerEmail: string;
+
+  @doc("Имя организатора, необязательное; видно посетителям")
+  ownerName: string;
+
+  @doc("День, на который назначена встреча")
+  date: plainDate;
+
+  createdAt: utcDateTime;
+}
+
+@doc("Тело POST /meetings")
+model NewMeeting {
+  name: string;
+  description?: string;
+  durationMin: int32;
+  ownerEmail: string;
+  ownerName?: string;
+  date: plainDate;
+}
+
+enum SlotStatus {
+  @doc("Свободен")
+  free,
+
+  @doc("Занят этой или другой встречей того же создателя (по пересечению)")
+  taken,
+
+  @doc("Время начала уже прошло")
+  past,
+
+  @doc("Хвостовой остаток дня короче продолжительности — серый, не выбирается")
+  tail,
+}
+
+@doc("Временной интервал (слот) дня")
+model Slot {
+  start: plainTime;
+  end: plainTime;
+  status: SlotStatus;
+}
+
+@doc("Число свободных интервалов на день (бейдж «18 св.»)")
+model DayAvailability {
+  date: plainDate;
+  free: int32;
+}
+
+@doc("Бронь посетителем интервала встречи")
+model Booking {
+  @key id: string;
+  meetingId: string;
+  date: plainDate;
+  start: plainTime;
+  end: plainTime;
+  name: string;
+  email: string;
+  createdAt: utcDateTime;
+}
+
+@doc("Запись для вкладки «Мои записи»: встреча, организатор (имя и/или email), статус")
+model BookingView extends Booking {
+  meetingName: string;
+  meetingOwnerName: string;
+  meetingOwnerEmail: string;
+
+  @doc("Встреча уже закончилась — попадает в группу «Прошедшие»")
+  past: boolean;
+}
+
+@doc("Тело POST /meetings/{id}/book — день берётся из встречи")
+model BookRequest {
+  start: plainTime;
+  name: string;
+  email: string;
+}
+
+// --- /api/workhours: границы на конкретный день конкретного создателя ---
+
+@route("/api/workhours")
+interface WorkHoursApi {
+  @get
+  @doc("Границы дня для (owner, date); по умолчанию 09:00–18:00")
+  getHours(
+    @query @doc("email создателя") owner: string,
+    @query @doc("дата встречи") date: plainDate,
+  ): WorkHoursView | ApiError<400>;
+
+  @put
+  @doc("Сохранить границы только для пары (owner, date)")
+  setHours(@body body: WorkHoursView):
+    | WorkHoursView
+    | ApiError<400>
+    | ApiError<422>;
+}
+
+// --- /api/meetings: встречи и бронирование ---
+
+@route("/api/meetings")
+interface MeetingsApi {
+  @get
+  @doc("Список встреч; ?owner= фильтрует по создателю")
+  list(@query owner?: string): Meeting[] | ApiError<400>;
+
+  @post
+  @doc("Создать встречу на конкретный день окна доступности")
+  create(@body body: NewMeeting):
+    | {
+        @statusCode code: 201;
+        @body meeting: Meeting;
+      }
+    | ApiError<422>;
+
+  @route("/{id}")
+  @delete
+  @doc("Отменить встречу: её интервалы снова свободны")
+  remove(@path id: string):
+    | {
+        @statusCode code: 204;
+      }
+    | ApiError<404>;
+
+  @route("/{id}/availability")
+  @get
+  @doc("Свободные интервалы на день встречи")
+  availability(@path id: string): DayAvailability | ApiError<404>;
+
+  @route("/{id}/slots")
+  @get
+  @doc("Сетка интервалов дня встречи")
+  slots(@path id: string): Slot[] | ApiError<404>;
+
+  @route("/{id}/book")
+  @post
+  @doc("Забронировать интервал; 409 — занят (включая другие встречи владельца)")
+  book(@path id: string, @body body: BookRequest):
+    | {
+        @statusCode code: 201;
+        @body booking: Booking;
+      }
+    | ApiError<404>
+    | ApiError<409>
+    | ApiError<422>;
+}
+
+// --- /api/preview: превью сетки до сохранения встречи (Сценарий 1) ---
+
+@route("/api/preview")
+interface PreviewApi {
+  @route("/availability")
+  @get
+  @doc("Окно доступности на 14 дней для создаваемой встречи")
+  availability(@query duration: int32, @query owner?: string):
+    | DayAvailability[]
+    | ApiError<400>;
+
+  @route("/slots")
+  @get
+  @doc("Сетка интервалов конкретного дня для создаваемой встречи")
+  slots(@query owner?: string, @query date: plainDate, @query duration: int32):
+    | Slot[]
+    | ApiError<400>;
+}
+
+// --- /api/bookings: «Мои записи» посетителя ---
+
+@route("/api/bookings")
+interface BookingsApi {
+  @get
+  @doc("Все записи пользователя по email; прошедшие помечены past=true")
+  list(@query email: string): BookingView[] | ApiError<400>;
+}
