@@ -8,10 +8,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Инструменты берутся из mise.toml (go 1.27.4, node 24.22.2)
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@v5
 
       - name: Доверить конфигурацию проекта
         run: mise trust .
