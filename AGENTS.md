@@ -39,3 +39,20 @@
   пересекающиеся слоты во всех его встречах на ту же дату; границы рабочего дня
   хранятся парой (email, дата), дефолт 09:00–18:00.
 - Не удалять и не переименовывать `.github/workflows/hexlet-check.yml` и репозиторий.
+
+## Agent skills
+
+### Issue tracker
+
+Задачи и спецификации живут в GitHub Issues этого репозитория, все операции —
+через `gh` CLI. См. `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Канонические дефолтные метки: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. См. `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` в корне, читаются перед разведкой
+кодовой базы. См. `docs/agents/domain.md`.
