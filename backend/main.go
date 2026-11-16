@@ -1,0 +1,242 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"time"
+)
+
+type server struct {
+	store *Store
+}
+
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, code int, err error) {
+	writeJSON(w, code, map[string]string{"error": err.Error()})
+}
+
+// bookingView — запись в представлении для клиента: встреча + флаг «пройдена»
+// + данные организатора (имя и/или email для вкладки «Мои записи»).
+type bookingView struct {
+	*Booking
+	MeetingName       string `json:"meetingName"`
+	MeetingOwnerName  string `json:"meetingOwnerName"`
+	MeetingOwnerEmail string `json:"meetingOwnerEmail"`
+	Past              bool   `json:"past"`
+}
+
+type hoursView struct {
+	Owner string `json:"owner"`
+	Date  string `json:"date"`
+	Hours
+}
+
+// /api/workhours?owner=boss@x.io&date=2026-11-20 — границы рабочего дня
+// конкретного создателя на конкретную дату (дефолт 09:00–18:00).
+// PUT с телом {owner, date, workStart, workEnd} сохраняет границы только
+// для этой пары; страница создания при этом не «перезагружается» —
+// фронтенд обновляет превью на месте.
+func (srv *server) handleWorkhours(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		owner := r.URL.Query().Get("owner")
+		date := r.URL.Query().Get("date")
+		if !ValidEmail(owner) || date == "" {
+			writeErr(w, http.StatusBadRequest, ErrOwnerRequired)
+			return
+		}
+		writeJSON(w, http.StatusOK, hoursView{Owner: owner, Date: date, Hours: srv.store.WorkHours(owner, date)})
+	case http.MethodPut:
+		var req hoursView
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := srv.store.SetWorkHours(req.Owner, req.Date, req.WorkStart, req.WorkEnd); err != nil {
+			writeErr(w, http.StatusUnprocessableEntity, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, hoursView{Owner: req.Owner, Date: req.Date, Hours: srv.store.WorkHours(req.Owner, req.Date)})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (srv *server) handleMeetings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// ?owner=boss@x.io — только встречи создателя (Сценарий 1),
+		// без параметра — все доступные встречи (Сценарий 2).
+		owner := r.URL.Query().Get("owner")
+		if owner != "" && !ValidEmail(owner) {
+			writeErr(w, http.StatusBadRequest, ErrOwnerRequired)
+			return
+		}
+		writeJSON(w, http.StatusOK, srv.store.Meetings(owner))
+	case http.MethodPost:
+		var m struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			DurationMin int    `json:"durationMin"`
+			OwnerEmail  string `json:"ownerEmail"`
+			OwnerName   string `json:"ownerName"`
+			Date        string `json:"date"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		created, err := srv.store.CreateMeeting(m.Name, m.Description, m.DurationMin, m.OwnerEmail, m.OwnerName, m.Date)
+		if err != nil {
+			writeErr(w, http.StatusUnprocessableEntity, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, created)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// /api/meetings/{id} — DELETE; /api/meetings/{id}/... — остальное.
+func (srv *server) handleMeeting(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sub := r.PathValue("sub")
+	if sub == "" {
+		if r.Method == http.MethodDelete {
+			srv.store.DeleteMeeting(id)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	switch {
+	case r.Method == http.MethodGet && sub == "availability":
+		av, ok := srv.store.MeetingAvailability(id)
+		if !ok {
+			writeErr(w, http.StatusNotFound, ErrMeetingNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, av)
+
+	case r.Method == http.MethodGet && sub == "slots":
+		// День встречи фиксирован — параметр date не нужен.
+		slots, ok := srv.store.DaySlots(id)
+		if !ok {
+			writeErr(w, http.StatusNotFound, ErrMeetingNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, slots)
+
+	case r.Method == http.MethodPost && sub == "book":
+		var req struct{ Start, Name, Email string }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		b, err := srv.store.Book(id, req.Start, req.Name, req.Email)
+		switch {
+		case errors.Is(err, ErrSlotTaken):
+			writeErr(w, http.StatusConflict, err)
+		case err != nil:
+			writeErr(w, http.StatusUnprocessableEntity, err)
+		default:
+			writeJSON(w, http.StatusCreated, b)
+		}
+
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+// /api/preview/availability?duration=30&owner=... и
+// /api/preview/slots?date=&duration=30&owner=... — превью сетки для ещё
+// не созданной встречи (Сценарий 1: создатель видит доступные слоты,
+// конкретный интервал он не выбирает).
+func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	dur, err := strconv.Atoi(q.Get("duration"))
+	if err != nil || dur <= 0 {
+		writeErr(w, http.StatusBadRequest, errors.New("некорректный параметр duration"))
+		return
+	}
+	owner := q.Get("owner")
+	if owner != "" && !ValidEmail(owner) {
+		writeErr(w, http.StatusBadRequest, ErrOwnerRequired)
+		return
+	}
+	if r.PathValue("sub") == "availability" {
+		writeJSON(w, http.StatusOK, srv.store.PreviewAvailability(dur, owner))
+		return
+	}
+	date := q.Get("date")
+	if date == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("не указан параметр date"))
+		return
+	}
+	writeJSON(w, http.StatusOK, srv.store.PreviewSlots(owner, date, dur))
+}
+
+// /api/bookings?email=... — все записи пользователя, прошедшие помечены past.
+func (srv *server) handleBookings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	email := r.URL.Query().Get("email")
+	if email == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("не указан параметр email"))
+		return
+	}
+	views := []bookingView{}
+	for _, b := range srv.store.BookingsByUser(email) {
+		view := bookingView{Booking: b, Past: srv.store.IsPast(b)}
+		if m, ok := srv.store.Meeting(b.MeetingID); ok {
+			view.MeetingName = m.Name
+			view.MeetingOwnerName = m.OwnerName
+			view.MeetingOwnerEmail = m.OwnerEmail
+		}
+		views = append(views, view)
+	}
+	writeJSON(w, http.StatusOK, views)
+}
+
+func main() {
+	addr := os.Getenv("ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	srv := &server{store: NewStore()}
+
+	// Демо-данные для пилотной версии, чтобы фронтенд не был пустым:
+	// встреча на «послезавтра».
+	demo, _ := strconv.Atoi(os.Getenv("DEMO_DAYS_AHEAD"))
+	if demo <= 0 {
+		demo = 2
+	}
+	demoDate := time.Now().AddDate(0, 0, demo).Format("2006-01-02")
+	if _, err := srv.store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, "demo@calendar.app", "Демо-организатор", demoDate); err != nil {
+		log.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/workhours", srv.handleWorkhours)
+	mux.HandleFunc("/api/meetings", srv.handleMeetings)
+	mux.HandleFunc("/api/meetings/{id}", srv.handleMeeting)
+	mux.HandleFunc("/api/meetings/{id}/{sub}", srv.handleMeeting)
+	mux.HandleFunc("/api/preview/{sub}", srv.handlePreview)
+	mux.HandleFunc("/api/bookings", srv.handleBookings)
+
+	log.Printf("calendar api on http://localhost%s", addr)
+	log.Fatal(http.ListenAndServe(addr, mux))
+}
