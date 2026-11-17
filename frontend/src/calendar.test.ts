@@ -47,7 +47,7 @@ describe("buildCalendar", () => {
     expect(sun.free).toBe(18);
   });
 
-  it("день с нулём свободных слотов остаётся в окне, но не выбирается как «св.»", () => {
+  it("день с нулём свободных интервалов остаётся в окне, но не выбирается как «св.»", () => {
     const m = buildCalendar(today, free([["2026-11-16", 0]]), 0);
     const cell = m.weeks[0].cells[0];
     expect(cell.inWindow).toBe(true);

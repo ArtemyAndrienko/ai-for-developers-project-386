@@ -11,18 +11,18 @@ const windowDays = 14
 // Специальные значения nowMin для GenerateSlots:
 //
 //	DayInPast   — весь день уже прошёл;
-//	DayInFuture — день ещё не наступил (ни один слот не «past»).
+//	DayInFuture — день ещё не наступил (ни один интервал не «past»).
 const (
 	DayInPast   = 24*60 + 1
 	DayInFuture = -1
 )
 
-// Статусы интервала (слота).
+// Статусы интервала (интервала).
 type SlotStatus string
 
 const (
 	SlotFree  SlotStatus = "free"  // свободен
-	SlotTaken SlotStatus = "taken" // занят (в т.ч. другой встречей того же владельца)
+	SlotTaken SlotStatus = "taken" // занят (в т.ч. другой встречей того же организатора)
 	SlotPast  SlotStatus = "past"  // время начала уже прошло
 	SlotTail  SlotStatus = "tail"  // остаток дня короче продолжительности (серый)
 )
@@ -62,9 +62,9 @@ func FormatHM(min int) string {
 
 // GenerateSlots разбивает рабочий день на интервалы заданной продолжительности
 // от startHM до endHM с шагом durationMin. Остаток дня короче продолжительности
-// возвращается последним слотом со статусом SlotTail (виден, но не выбирается).
-// busy — занятые отрезки: слот помечается SlotTaken при любом пересечении,
-// поэтому занятость владельца из другой встречи (с другим шагом сетки) тоже
+// возвращается последним интервалом со статусом SlotTail (виден, но не выбирается).
+// busy — занятые отрезки: интервал помечается SlotTaken при любом пересечении,
+// поэтому занятость организатора из другой встречи (с другим шагом сетки) тоже
 // попадает в сетку корректно.
 func GenerateSlots(startHM, endHM string, durationMin, nowMin int, busy []Interval) []Slot {
 	start, ok1 := ParseHM(startHM)
@@ -100,7 +100,7 @@ func overlapsAny(s, e int, busy []Interval) bool {
 	return false
 }
 
-// FreeCount считает свободные слоты за день (для бейджа «18 св.»).
+// FreeCount считает свободные интервалы за день (для бейджа «18 св.»).
 func FreeCount(slots []Slot) int {
 	n := 0
 	for _, s := range slots {
@@ -121,7 +121,7 @@ func SlotAllowed(slots []Slot, start string) (Slot, bool) {
 	return Slot{}, false
 }
 
-// ValidEmail — минимальная проверка почты создателя/посетителя.
+// ValidEmail — минимальная проверка почты организатора/посетителя.
 func ValidEmail(s string) bool {
 	s = strings.TrimSpace(s)
 	at := strings.Index(s, "@")

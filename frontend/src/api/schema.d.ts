@@ -28,7 +28,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Список встреч; ?owner= фильтрует по создателю */
+        /** @description Список встреч; ?owner= фильтрует по организателю */
         get: operations["MeetingsApi_list"];
         put?: never;
         /** @description Создать встречу на конкретный день окна доступности */
@@ -82,7 +82,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Забронировать интервал; 409 — занят (включая другие встречи владельца) */
+        /** @description Забронировать интервал; 409 — занят (включая другие встречи организатора) */
         post: operations["MeetingsApi_book"];
         delete?: never;
         options?: never;
@@ -214,7 +214,7 @@ export interface components {
              * @description Длительность интервала в минутах
              */
             durationMin: number;
-            /** @description Email создателя: по нему проверяется занятость во всех его встречах */
+            /** @description Email организатора: по нему проверяется занятость во всех его встречах */
             ownerEmail: string;
             /** @description Имя организатора, необязательное; видно посетителям */
             ownerName: string;
@@ -237,7 +237,7 @@ export interface components {
             /** Format: date */
             date: string;
         };
-        /** @description Временной интервал (слот) дня */
+        /** @description Временной интервал (интервал) дня */
         Slot: {
             /** Format: time */
             start: string;
@@ -254,7 +254,7 @@ export interface components {
             /** Format: time */
             workEnd: string;
         };
-        /** @description Границы рабочего дня, сопоставленные с парой (email создателя, дата) */
+        /** @description Границы рабочего дня, сопоставленные с парой (email организатора, дата) */
         WorkHoursView: {
             owner: string;
             /** Format: date */
@@ -576,7 +576,7 @@ export interface operations {
     WorkHoursApi_getHours: {
         parameters: {
             query: {
-                /** @description email создателя */
+                /** @description email организатора */
                 owner: string;
                 /** @description дата встречи */
                 date: string;

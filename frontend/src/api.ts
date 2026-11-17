@@ -37,7 +37,7 @@ function ensureOk(res: {
 }
 
 export const api = {
-  // Границы рабочего дня: по почте создателя на конкретную дату (дефолт 09:00–18:00).
+  // Границы рабочего дня: по почте организатора на конкретную дату (дефолт 09:00–18:00).
   workHours: async (owner: string, date: string): Promise<WorkHours> => {
     const { data, ...res } = await client.GET("/api/workhours", {
       params: { query: { owner, date } },

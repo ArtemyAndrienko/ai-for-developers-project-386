@@ -4,22 +4,22 @@ import (
 	"testing"
 )
 
-// Полный рабочий день 09:00–18:00 с шагом 30 минут даёт ровно 18 слотов
+// Полный рабочий день 09:00–18:00 с шагом 30 минут даёт ровно 18 интервалов
 // и без хвостового остатка (референс: бейдж «18 св.»).
 func TestGenerateSlots_FullDayNoTail(t *testing.T) {
 	slots := GenerateSlots("09:00", "18:00", 30, DayInFuture, nil)
 	if len(slots) != 18 {
-		t.Fatalf("ожидалось 18 слотов, получено %d", len(slots))
+		t.Fatalf("ожидалось 18 интервалов, получено %d", len(slots))
 	}
 	if slots[0].Start != "09:00" || slots[0].End != "09:30" {
-		t.Errorf("первый слот %v", slots[0])
+		t.Errorf("первый интервал %v", slots[0])
 	}
 	if last := slots[17]; last.Start != "17:30" || last.End != "18:00" {
-		t.Errorf("последний слот %v", last)
+		t.Errorf("последний интервал %v", last)
 	}
 	for _, s := range slots {
 		if s.Status != SlotFree {
-			t.Errorf("слот %v должен быть свободен", s)
+			t.Errorf("интервал %v должен быть свободен", s)
 		}
 	}
 }
@@ -34,19 +34,19 @@ func TestGenerateSlots_TailIsGray(t *testing.T) {
 	}
 	last := full[len(full)-1]
 	if last.Status != SlotTail {
-		t.Fatalf("хвостовой слот должен быть серым, получили %v", last)
+		t.Fatalf("хвостовой интервал должен быть серым, получили %v", last)
 	}
 	if last.Start != "17:15" || last.End != "17:50" {
-		t.Errorf("хвостовой слот: %v", last)
+		t.Errorf("хвостовой интервал: %v", last)
 	}
 	if FreeCount(full) != len(full)-1 {
-		t.Errorf("хвостовой слот не должен считаться свободным")
+		t.Errorf("хвостовой интервал не должен считаться свободным")
 	}
 }
 
 func TestGenerateSlots_Statuses(t *testing.T) {
 	busy := []Interval{{Start: 9 * 60, End: 9*60 + 30}, {Start: 9*60 + 30, End: 10 * 60}}
-	// now = 10:00: слоты с началом <= 10:00 — прошедшие (если не заняты).
+	// now = 10:00: интервалы с началом <= 10:00 — прошедшие (если не заняты).
 	slots := GenerateSlots("09:00", "12:00", 30, 10*60, busy)
 	want := map[string]SlotStatus{
 		"09:00": SlotTaken, // занят, приоритет над прошедшим
@@ -57,16 +57,16 @@ func TestGenerateSlots_Statuses(t *testing.T) {
 		"11:30": SlotFree,
 	}
 	if len(slots) != len(want) {
-		t.Fatalf("ожидалось %d слотов, получено %d", len(want), len(slots))
+		t.Fatalf("ожидалось %d интервалов, получено %d", len(want), len(slots))
 	}
 	for _, s := range slots {
 		if want[s.Start] != s.Status {
-			t.Errorf("слот %s: статус %s, ожидался %s", s.Start, s.Status, want[s.Start])
+			t.Errorf("интервал %s: статус %s, ожидался %s", s.Start, s.Status, want[s.Start])
 		}
 	}
 }
 
-// Занятость из другой встречи: 60-минутный слот 10:00–11:00 пересекается с
+// Занятость из другой встречи: 60-минутный интервал 10:00–11:00 пересекается с
 // уже забронированным 10:30–11:00 (30-мин.) — помечается занятым.
 func TestGenerateSlots_OverlapFromOtherMeeting(t *testing.T) {
 	busy := []Interval{{Start: 10*60 + 30, End: 11 * 60}}
@@ -77,11 +77,11 @@ func TestGenerateSlots_OverlapFromOtherMeeting(t *testing.T) {
 		"11:00": SlotFree,
 	}
 	if len(slots) != 3 {
-		t.Fatalf("3 шестидесятиминутных слота, получено %d", len(slots))
+		t.Fatalf("3 шестидесятиминутных интервала, получено %d", len(slots))
 	}
 	for _, s := range slots {
 		if want[s.Start] != s.Status {
-			t.Errorf("слот %s: статус %s, ожидался %s", s.Start, s.Status, want[s.Start])
+			t.Errorf("интервал %s: статус %s, ожидался %s", s.Start, s.Status, want[s.Start])
 		}
 	}
 }
@@ -98,7 +98,7 @@ func TestGenerateSlots_DayInPast(t *testing.T) {
 func TestSlotAllowed(t *testing.T) {
 	slots := GenerateSlots("09:00", "18:00", 30, DayInFuture, nil)
 	if _, ok := SlotAllowed(slots, "09:00"); !ok {
-		t.Errorf("свободный слот должен разрешать бронь")
+		t.Errorf("свободный интервал должен разрешать бронь")
 	}
 	if _, ok := SlotAllowed(slots, "09:15"); ok {
 		t.Errorf("интервала вне сетки не существует")
@@ -106,7 +106,7 @@ func TestSlotAllowed(t *testing.T) {
 	tailDay := GenerateSlots("09:00", "17:50", 45, DayInFuture, nil)
 	tail := tailDay[len(tailDay)-1]
 	if _, ok := SlotAllowed(tailDay, tail.Start); ok {
-		t.Errorf("хвостовой серый слот нельзя бронировать")
+		t.Errorf("хвостовой серый интервал нельзя бронировать")
 	}
 }
 

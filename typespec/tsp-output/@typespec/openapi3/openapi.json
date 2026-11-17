@@ -52,7 +52,7 @@
     "/api/meetings": {
       "get": {
         "operationId": "MeetingsApi_list",
-        "description": "Список встреч; ?owner= фильтрует по создателю",
+        "description": "Список встреч; ?owner= фильтрует по организателю",
         "parameters": [
           {
             "name": "owner",
@@ -200,7 +200,7 @@
     "/api/meetings/{id}/book": {
       "post": {
         "operationId": "MeetingsApi_book",
-        "description": "Забронировать интервал; 409 — занят (включая другие встречи владельца)",
+        "description": "Забронировать интервал; 409 — занят (включая другие встречи организатора)",
         "parameters": [
           {
             "name": "id",
@@ -429,7 +429,7 @@
             "name": "owner",
             "in": "query",
             "required": true,
-            "description": "email создателя",
+            "description": "email организатора",
             "schema": {
               "type": "string"
             },
@@ -675,7 +675,7 @@
           },
           "ownerEmail": {
             "type": "string",
-            "description": "Email создателя: по нему проверяется занятость во всех его встречах"
+            "description": "Email организатора: по нему проверяется занятость во всех его встречах"
           },
           "ownerName": {
             "type": "string",
@@ -745,7 +745,7 @@
             "$ref": "#/components/schemas/SlotStatus"
           }
         },
-        "description": "Временной интервал (слот) дня"
+        "description": "Временной интервал (интервал) дня"
       },
       "SlotStatus": {
         "type": "string",
@@ -794,7 +794,7 @@
             "$ref": "#/components/schemas/WorkHours"
           }
         ],
-        "description": "Границы рабочего дня, сопоставленные с парой (email создателя, дата)"
+        "description": "Границы рабочего дня, сопоставленные с парой (email организатора, дата)"
       }
     }
   }

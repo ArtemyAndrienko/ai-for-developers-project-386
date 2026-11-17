@@ -53,11 +53,11 @@ func TestBook_HappyPath(t *testing.T) {
 
 	// Второй посетитель на тот же интервал — конфликт.
 	if _, err := s.Book(m.ID, "09:00", "Оля", "olya@example.com"); !errors.Is(err, ErrSlotTaken) {
-		t.Errorf("повторная бронь занятого слота: %v", err)
+		t.Errorf("повторная бронь занятого интервала: %v", err)
 	}
 	// Следующий интервал — свободен.
 	if _, err := s.Book(m.ID, "09:30", "Оля", "olya@example.com"); err != nil {
-		t.Errorf("бронь следующего слота: %v", err)
+		t.Errorf("бронь следующего интервала: %v", err)
 	}
 	av, ok := s.MeetingAvailability(m.ID)
 	if !ok || av.Date != "2026-11-17" || av.Free != 16 {
@@ -65,7 +65,7 @@ func TestBook_HappyPath(t *testing.T) {
 	}
 }
 
-// Занятость владельца сквозная: запись в одну встречу блокирует пересекающиеся
+// Занятость организатора сквозная: запись в одну встречу блокирует пересекающиеся
 // интервалы в других его встречах на ту же дату.
 func TestBook_OwnerBusyAcrossMeetings(t *testing.T) {
 	s := newTestStore(t)
@@ -79,21 +79,21 @@ func TestBook_OwnerBusyAcrossMeetings(t *testing.T) {
 
 	statuses := freeStarts(t, s, m60.ID)
 	if statuses["10:00"] != SlotTaken {
-		t.Errorf("слот 10:00–11:00 пересекается с 10:30–11:00 владельца и должен быть занят: %s", statuses["10:00"])
+		t.Errorf("интервал 10:00–11:00 пересекается с 10:30–11:00 организатора и должен быть занят: %s", statuses["10:00"])
 	}
 	if statuses["09:00"] != SlotFree || statuses["11:00"] != SlotFree {
-		t.Errorf("непересекающиеся слоты должны быть свободны: %v", statuses)
+		t.Errorf("непересекающиеся интервалы должны быть свободны: %v", statuses)
 	}
 	if _, err := s.Book(m60.ID, "10:00", "Оля", "olya@example.com"); !errors.Is(err, ErrSlotTaken) {
-		t.Errorf("бронь пересекающегося слота другой встречи того же владельца: %v", err)
+		t.Errorf("бронь пересекающегося интервала другой встречи того же организатора: %v", err)
 	}
 
-	// Другой владелец в это же время не блокируется.
+	// Другой организатор в это же время не блокируется.
 	if _, err := s.Book(mOther.ID, "10:00", "Оля", "olya@example.com"); err != nil {
-		t.Errorf("другой владелец не должен блокироваться: %v", err)
+		t.Errorf("другой организатор не должен блокироваться: %v", err)
 	}
 
-	// Обратное пересечение: после 09:00–10:00 в 60-мин сетке слот 09:00–09:30 занят.
+	// Обратное пересечение: после 09:00–10:00 в 60-мин сетке интервал 09:00–09:30 занят.
 	if _, err := s.Book(m60.ID, "09:00", "Петя", "petya@example.com"); err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +102,8 @@ func TestBook_OwnerBusyAcrossMeetings(t *testing.T) {
 	}
 }
 
-// Границы рабочего дня — по почте создателя на конкретную дату встречи;
-// дефолт 09:00–18:00; другие даты и другие создатели не затрагиваются.
+// Границы рабочего дня — по почте организатора на конкретную дату встречи;
+// дефолт 09:00–18:00; другие даты и другие организаторы не затрагиваются.
 func TestWorkHours_PerOwnerPerDate(t *testing.T) {
 	s := newTestStore(t)
 
@@ -120,7 +120,7 @@ func TestWorkHours_PerOwnerPerDate(t *testing.T) {
 	m := mustMeeting(t, s, "Узкое окно", 30, "boss@x.io", "2026-11-17")
 	slots, _ := s.DaySlots(m.ID)
 	if len(slots) != 4 { // 10:00, 10:30, 11:00, 11:30
-		t.Fatalf("в сохранённых границах 10:00–12:00 должно быть 4 слота, получили %d", len(slots))
+		t.Fatalf("в сохранённых границах 10:00–12:00 должно быть 4 интервала, получили %d", len(slots))
 	}
 	if slots[0].Start != "10:00" || slots[3].End != "12:00" {
 		t.Errorf("сетка не по границам дня: %v … %v", slots[0], slots[3])
@@ -129,11 +129,11 @@ func TestWorkHours_PerOwnerPerDate(t *testing.T) {
 	// Та же почта, другая дата — по-прежнему дефолт.
 	m2 := mustMeeting(t, s, "Обычный день", 30, "boss@x.io", "2026-11-18")
 	if slots2, _ := s.DaySlots(m2.ID); len(slots2) != 18 {
-		t.Errorf("на 18.11 границы не должны были измениться, слотов %d", len(slots2))
+		t.Errorf("на 18.11 границы не должны были измениться, интервалов %d", len(slots2))
 	}
-	// Другой создатель на 17.11 — дефолт.
+	// Другой организатор на 17.11 — дефолт.
 	if h := s.WorkHours("other@x.io", "2026-11-17"); h.WorkStart != "09:00" {
-		t.Errorf("границы не должны протекать между создателями: %+v", h)
+		t.Errorf("границы не должны протекать между организаторами: %+v", h)
 	}
 
 	// Валидация.
@@ -141,14 +141,14 @@ func TestWorkHours_PerOwnerPerDate(t *testing.T) {
 		t.Error("окончание раньше начала должно отклоняться")
 	}
 	if err := s.SetWorkHours("not-an-email", "2026-11-17", "10:00", "12:00"); !errors.Is(err, ErrOwnerRequired) {
-		t.Errorf("email создателя обязателен: %v", err)
+		t.Errorf("email организатора обязателен: %v", err)
 	}
 	if err := s.SetWorkHours("boss@x.io", "2026-13-45", "10:00", "12:00"); err == nil {
 		t.Error("некорректная дата должна отклоняться")
 	}
 }
 
-// Превью создаваемой встречи: границы для (owner, date) + занятость владельца.
+// Превью создаваемой встречи: границы для (owner, date) + занятость организатора.
 func TestPreviewSlots(t *testing.T) {
 	s := newTestStore(t)
 	m30 := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
@@ -162,18 +162,18 @@ func TestPreviewSlots(t *testing.T) {
 		if sl.Start == "10:00" {
 			found = true
 			if sl.Status != SlotTaken {
-				t.Errorf("в превью слот 10:00 должен быть занят, статус %s", sl.Status)
+				t.Errorf("в превью интервал 10:00 должен быть занят, статус %s", sl.Status)
 			}
 		}
 	}
 	if !found {
-		t.Fatal("в превью нет слота 10:00")
+		t.Fatal("в превью нет интервала 10:00")
 	}
 
 	// Без owner превью не учитывает чужие брони.
 	for _, sl := range s.PreviewSlots("", "2026-11-17", 60) {
 		if sl.Start == "10:00" && sl.Status != SlotFree {
-			t.Error("без email создателя превью не должно показывать занятость")
+			t.Error("без email организатора превью не должно показывать занятость")
 		}
 	}
 
@@ -183,7 +183,7 @@ func TestPreviewSlots(t *testing.T) {
 	}
 	pv := s.PreviewSlots("boss@x.io", "2026-11-19", 30)
 	if pv[0].Start != "14:00" {
-		t.Errorf("превью должно использовать границы 14:00–18:00, первый слот %s", pv[0].Start)
+		t.Errorf("превью должно использовать границы 14:00–18:00, первый интервал %s", pv[0].Start)
 	}
 }
 
@@ -198,7 +198,7 @@ func TestCreateMeeting_Validation(t *testing.T) {
 	}{
 		{"без названия", "", "boss@x.io", 30, "2026-11-17", nil},
 		{"нулевая длительность", "x", "boss@x.io", 0, "2026-11-17", nil},
-		{"без email создателя", "x", "", 30, "2026-11-17", ErrOwnerRequired},
+		{"без email организатора", "x", "", 30, "2026-11-17", ErrOwnerRequired},
 		{"некорректный email", "x", "nope", 30, "2026-11-17", ErrOwnerRequired},
 		{"дата в прошлом", "x", "boss@x.io", 30, "2026-11-10", ErrDateRequired},
 		{"дата вне окна", "x", "boss@x.io", 30, "2026-12-31", ErrDateRequired},
@@ -222,7 +222,7 @@ func TestMeetingsFilterByOwner(t *testing.T) {
 	mustMeeting(t, s, "Чужая", 30, "other@x.io", "2026-11-18")
 	got := s.Meetings("boss@x.io")
 	if len(got) != 2 || got[0].Name != "Ранняя" || got[1].Name != "Поздняя" {
-		t.Errorf("фильтр/сортировка по владельцу: %+v", got)
+		t.Errorf("фильтр/сортировка по организатору: %+v", got)
 	}
 	if all := s.Meetings(""); len(all) != 3 {
 		t.Errorf("без фильтра — все встречи: %d", len(all))
@@ -253,7 +253,7 @@ func TestPreviewAndDeleteMeeting(t *testing.T) {
 	if len(avail) != windowDays || avail[0].Date != "2026-11-16" || avail[13].Date != "2026-11-29" {
 		t.Fatalf("окно превью: %+v", avail)
 	}
-	if avail[0].Free != 11 { // сегодня: сейчас 12:00 → слоты с 12:30 по 17:30
+	if avail[0].Free != 11 { // сегодня: сейчас 12:00 → интервалы с 12:30 по 17:30
 		t.Errorf("на сегодня 11 свободных, получили %d", avail[0].Free)
 	}
 
@@ -309,7 +309,7 @@ func TestBook_TailSlotRejected(t *testing.T) {
 		t.Fatalf("последний интервал должен быть серым: %v", tail)
 	}
 	if _, err := s.Book(m.ID, tail.Start, "Иван", "ivan@example.com"); !errors.Is(err, ErrSlotUnavailable) {
-		t.Errorf("бронь хвостового слота: %v", err)
+		t.Errorf("бронь хвостового интервала: %v", err)
 	}
 }
 
@@ -381,7 +381,7 @@ func TestPersistAcrossReopen(t *testing.T) {
 	if len(bs) != 1 || bs[0].ID != b.ID || bs[0].End != "10:30" {
 		t.Errorf("запись не пережила рестарт: %+v", bs)
 	}
-	// Конфликт после рестарта по-прежнему блокирует слот.
+	// Конфликт после рестарта по-прежнему блокирует интервал.
 	if _, err := s2.Book(m.ID, "10:00", "Оля", "olya@example.com"); !errors.Is(err, ErrSlotTaken) {
 		t.Errorf("после рестарта ожидан 409-конфликт, получили %v", err)
 	}

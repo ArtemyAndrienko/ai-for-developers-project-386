@@ -33,7 +33,7 @@ model WorkHours {
   workEnd: plainTime;
 }
 
-@doc("Границы рабочего дня, сопоставленные с парой (email создателя, дата)")
+@doc("Границы рабочего дня, сопоставленные с парой (email организатора, дата)")
 model WorkHoursView extends WorkHours {
   owner: string;
   date: plainDate;
@@ -48,7 +48,7 @@ model Meeting {
   @doc("Длительность интервала в минутах")
   durationMin: int32;
 
-  @doc("Email создателя: по нему проверяется занятость во всех его встречах")
+  @doc("Email организатора: по нему проверяется занятость во всех его встречах")
   ownerEmail: string;
 
   @doc("Имя организатора, необязательное; видно посетителям")
@@ -74,7 +74,7 @@ enum SlotStatus {
   @doc("Свободен")
   free,
 
-  @doc("Занят этой или другой встречей того же создателя (по пересечению)")
+  @doc("Занят этой или другой встречей того же организатора (по пересечению)")
   taken,
 
   @doc("Время начала уже прошло")
@@ -84,7 +84,7 @@ enum SlotStatus {
   tail,
 }
 
-@doc("Временной интервал (слот) дня")
+@doc("Временной интервал (интервал) дня")
 model Slot {
   start: plainTime;
   end: plainTime;
@@ -126,14 +126,14 @@ model BookRequest {
   email: string;
 }
 
-// --- /api/workhours: границы на конкретный день конкретного создателя ---
+// --- /api/workhours: границы на конкретный день конкретного организатора ---
 
 @route("/api/workhours")
 interface WorkHoursApi {
   @get
   @doc("Границы дня для (owner, date); по умолчанию 09:00–18:00")
   getHours(
-    @query @doc("email создателя") owner: string,
+    @query @doc("email организатора") owner: string,
     @query @doc("дата встречи") date: plainDate,
   ): WorkHoursView | ApiError<400>;
 
@@ -150,7 +150,7 @@ interface WorkHoursApi {
 @route("/api/meetings")
 interface MeetingsApi {
   @get
-  @doc("Список встреч; ?owner= фильтрует по создателю")
+  @doc("Список встреч; ?owner= фильтрует по организателю")
   list(@query owner?: string): Meeting[] | ApiError<400>;
 
   @post
@@ -183,7 +183,7 @@ interface MeetingsApi {
 
   @route("/{id}/book")
   @post
-  @doc("Забронировать интервал; 409 — занят (включая другие встречи владельца)")
+  @doc("Забронировать интервал; 409 — занят (включая другие встречи организатора)")
   book(@path id: string, @body body: BookRequest):
     | {
         @statusCode code: 201;

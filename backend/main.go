@@ -42,7 +42,7 @@ type hoursView struct {
 }
 
 // /api/workhours?owner=boss@x.io&date=2026-11-20 — границы рабочего дня
-// конкретного создателя на конкретную дату (дефолт 09:00–18:00).
+// конкретного организатора на конкретную дату (дефолт 09:00–18:00).
 // PUT с телом {owner, date, workStart, workEnd} сохраняет границы только
 // для этой пары; страница создания при этом не «перезагружается» —
 // фронтенд обновляет превью на месте.
@@ -75,7 +75,7 @@ func (srv *server) handleWorkhours(w http.ResponseWriter, r *http.Request) {
 func (srv *server) handleMeetings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		// ?owner=boss@x.io — только встречи создателя (Сценарий 1),
+		// ?owner=boss@x.io — только встречи организатора (Сценарий 1),
 		// без параметра — все доступные встречи (Сценарий 2).
 		owner := r.URL.Query().Get("owner")
 		if owner != "" && !ValidEmail(owner) {
@@ -162,7 +162,7 @@ func (srv *server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 
 // /api/preview/availability?duration=30&owner=... и
 // /api/preview/slots?date=&duration=30&owner=... — превью сетки для ещё
-// не созданной встречи (Сценарий 1: создатель видит доступные слоты,
+// не созданной встречи (Сценарий 1: организатор видит доступные интервалы,
 // конкретный интервал он не выбирает).
 func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
