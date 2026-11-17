@@ -1,14 +1,21 @@
-// Сценарий 1: владелец создаёт встречу. Поля: название, описание, email
-// создателя, продолжительность и дата (встреча назначается на конкретный
-// день). Конкретный слот не выбирается — список интервалов показывает превью
+// Сценарий 1: организатор создаёт встречу. Поля: название, описание, email
+// организатора, продолжительность и дата (встреча назначается на конкретный
+// день). Конкретный интервал не выбирается — список интервалов показывает превью
 // доступности. Границы рабочего дня берутся для пары (email, дата) и
 // сохраняются только для выбранного дня; сохранение границ обновляет превью
 // НА МЕСТЕ, без перезагрузки/сброса формы создания встречи.
-// После сохранения — список всех встреч создателя (пустой, если их нет).
+// После сохранения — список всех встреч организатора (пустой, если их нет).
 
 import { api } from "../api";
 import { buildCalendar, renderCalendar } from "../calendar";
-import { OWNER_EMAIL_KEY, OWNER_NAME_KEY, ruLongDate, slotLabel, todayIso } from "../utils";
+import {
+  emailLike,
+  OWNER_EMAIL_KEY,
+  OWNER_NAME_KEY,
+  ruLongDate,
+  slotLabel,
+  todayIso,
+} from "../utils";
 import type { DayAvailability, Meeting, Slot } from "../types";
 
 interface CreateState {
@@ -25,7 +32,6 @@ interface CreateState {
   hoursNote: string;
 }
 
-const emailLike = (s: string) => /\S+@\S+\.\S+/.test(s.trim());
 
 export async function renderCreate(app: HTMLElement): Promise<void> {
   const state: CreateState = {
@@ -55,7 +61,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
         <div id="form-error"></div>
         <label>Название <input id="name" placeholder="Обязательно" /></label>
         <label>Описание <textarea id="desc" rows="2"></textarea></label>
-        <label>Email создателя <input id="owner" type="email" placeholder="boss@example.com" />
+        <label>Email организатора <input id="owner" type="email" placeholder="boss@example.com" />
           <small class="muted">по нему учитывается занятость интервалов во всех ваших встречах</small></label>
         <label>Имя организатора <input id="owner-name" placeholder="Необязательно, видно посетителям" /></label>
         <label>Продолжительность
@@ -140,7 +146,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
     );
   };
 
-  // Границы только на выбранный день создателя; без даты/email — дефолт.
+  // Границы только на выбранный день организатора; без даты/email — дефолт.
   const renderHours = (workStart: string, workEnd: string) => {
     hoursEl.innerHTML = `
       <h4>Рабочий день${state.date ? ` — ${ruLongDate(state.date)}` : ""}</h4>
@@ -216,7 +222,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
       btn.addEventListener("click", async () => {
         await api.deleteMeeting(btn.dataset.del!);
         state.meetings = await api.meetings(state.owner || undefined);
-        await refreshPreview(); // занятость владельца пересчитана
+        await refreshPreview(); // занятость организатора пересчитана
         renderMeetings();
       }),
     );

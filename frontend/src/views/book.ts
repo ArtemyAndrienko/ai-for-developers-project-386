@@ -2,7 +2,7 @@
 // конкретный день) и свободный интервал, подтверждает запись имя+email.
 
 import { api, ApiError } from "../api";
-import { LAST_EMAIL_KEY, ruLongDate, slotLabel } from "../utils";
+import { emailLike, LAST_EMAIL_KEY, ruLongDate, slotLabel, visitorClashes } from "../utils";
 import type { Meeting, Slot } from "../types";
 
 type Step = "select" | "confirm" | "done";
@@ -67,9 +67,40 @@ export async function renderBook(app: HTMLElement): Promise<void> {
             ${state.error ? `<div class="error">${state.error}</div>` : ""}
             <label>Имя <input id="name" value="${state.name}" /></label>
             <label>Email <input id="email" type="email" value="${state.email}" /></label>
+            <div id="conflict-warn"></div>
             <button class="btn primary block" id="submit">Подтвердить запись</button>
           </div>
         </div>`;
+      const checkConflicts = async () => {
+        const warn = app.querySelector<HTMLElement>("#conflict-warn")!;
+        const m = meeting();
+        const slot = state.slots.find((s) => s.start === state.slotStart);
+        const email = (app.querySelector("#email") as HTMLInputElement).value.trim();
+        if (!m || !slot || !emailLike(email)) {
+          warn.innerHTML = "";
+          return;
+        }
+        try {
+          const clashes = visitorClashes(
+            await api.bookings(email),
+            m.id,
+            m.date,
+            slot.start,
+            slot.end,
+          );
+          warn.innerHTML = clashes
+            .map(
+              (b) => `<div class="warn">Внимание: у вас уже есть запись ${b.start}–${b.end}
+                на «${b.meetingName}» (${b.meetingOwnerName || b.meetingOwnerEmail})
+                в это же время. Бронирование не блокируется — но время пересечётся.</div>`,
+            )
+            .join("");
+        } catch {
+          warn.innerHTML = ""; // предупреждение — не причина отказывать
+        }
+      };
+      app.querySelector("#email")!.addEventListener("change", () => void checkConflicts());
+      void checkConflicts();
       app.querySelector("#edit")!.addEventListener("click", () => {
         state.step = "select";
         state.error = null;
@@ -88,10 +119,10 @@ export async function renderBook(app: HTMLElement): Promise<void> {
           state.step = "done";
         } catch (e) {
           if (e instanceof ApiError && e.status === 409) {
-            // Интервал успели забронировать (в т.ч. в другой встрече владельца).
+            // Интервал успели забронировать (в т.ч. в другой встрече организатора).
             state.step = "select";
             state.slotStart = null;
-            state.error = e.message || "Слот только что заняли. Выберите другое время.";
+            state.error = e.message || "Интервал только что заняли. Выберите другое время.";
             state.slots = await api.slots(state.meetingId!);
           } else {
             state.error = e instanceof Error ? e.message : "Ошибка записи";
@@ -119,7 +150,7 @@ export async function renderBook(app: HTMLElement): Promise<void> {
       <div class="cols two">
         ${infoCard(state, meeting())}
         <div class="card">
-          <h3>Статус слотов</h3>
+          <h3>Статус интервалов</h3>
           ${
             !state.meetingId
               ? `<div class="hint">Выберите встречу выше.</div>`
@@ -179,7 +210,7 @@ function infoCard(state: BookState, m: Meeting | null): string {
         slot ? `${slot.start} - ${slot.end}` : "Время не выбрано"
       }</strong></div>
       <div class="kv"><span>Свободно</span><strong>${state.meetingId ? free : 0}</strong></div>
-      <div class="kv"><span>Длительность слота</span><strong>${
+      <div class="kv"><span>Длительность интервала</span><strong>${
         m ? `${m.durationMin} мин` : "—"
       }</strong></div>
     </div>`;

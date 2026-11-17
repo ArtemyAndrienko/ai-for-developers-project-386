@@ -51,6 +51,32 @@ export function slotLabel(status: string): string {
   return slotLabels[status] ?? status;
 }
 
+export const emailLike = (s: string) => /\S+@\S+\.\S+/.test(s.trim());
+
+import type { BookingView } from "./types";
+
+// Мягкий конфликт (GLOSSARY: «Конфликт»): пересечение интервала с будущей
+// записью посетителя в ДРУГОЙ встрече. Бронированию не мешает — только
+// предупреждаем.
+export function visitorClashes(
+  bookings: BookingView[],
+  meetingId: string,
+  meetingDate: string,
+  slotStart: string,
+  slotEnd: string,
+): BookingView[] {
+  const s = hmToMin(slotStart);
+  const e = hmToMin(slotEnd);
+  return bookings.filter(
+    (b) =>
+      !b.past &&
+      b.meetingId !== meetingId &&
+      b.date === meetingDate &&
+      hmToMin(b.start) < e &&
+      s < hmToMin(b.end),
+  );
+}
+
 const ruDate = new Intl.DateTimeFormat("ru-RU", {
   weekday: "long",
   day: "numeric",
