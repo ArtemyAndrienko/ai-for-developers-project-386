@@ -18,8 +18,9 @@
 
 ## Структура
 
-- `backend/` — Go (только stdlib `net/http`): `main.go` — роуты/JSON,
-  `store.go` — хранилище и бизнес-правила, `slots.go` — генерация интервалов дня
+- `backend/` — Go (только stdlib `net/http` + `database/sql`): `main.go` — роуты/JSON,
+  `store.go` — SQLite-хранилище, `slots.go` — генерация интервалов, `migrate.go` —
+  применения SQL из `backend/migrations/`
 - `frontend/` — Vite + vanilla TypeScript: `src/views/{book,create,mine}.ts`,
   `src/api.ts` — обёртка над сгенерированным SDK
 - `typespec/` — контракт API `main.tsp` и результат `tsp-output/…/openapi.json`
@@ -33,8 +34,10 @@
   Файлы `typespec/tsp-output/**` и `frontend/src/api/schema.d.ts` — артефакты
   генерации, руками не редактировать; `frontend/src/types.ts` — только ре-экспорт
   схем из `schema.d.ts`.
-- Хранилище in-memory в Go-структурах: данные живут до рестарта процесса;
-  замена на embedded-БД планируется, публичные методы `Store` менять не стоит.
+- Хранилище — SQLite (ADR-0001, `modernc.org/sqlite` без cgo): файл `data/calendar.db`
+  (переменная `DATA_PATH`), миграции — нумерованные SQL в `backend/migrations/` через
+  `go:embed` + таблица `schema_version`; тесты на `:memory:`. Публичные методы `Store`
+  — стабильный интерфейс.
 - Занятость интервалов сквозная: брони одного создателя (по email) блокируют
   пересекающиеся слоты во всех его встречах на ту же дату; границы рабочего дня
   хранятся парой (email, дата), дефолт 09:00–18:00.

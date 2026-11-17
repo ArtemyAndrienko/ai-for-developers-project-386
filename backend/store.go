@@ -1,17 +1,16 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
-	"sort"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	_ "modernc.org/sqlite" // чистый Go, без cgo (ADR-0001)
 )
 
-// Hours — границы рабочего дня. Хранятся для конкретной пары
-// (email создателя, дата): «границы применяются на конкретный день,
-// на который назначена встреча, и сопоставляются по адресу почты».
-// Значение по умолчанию — 09:00–18:00.
+// Hours — границы рабочего дня; хранятся для пары (email организатора, дата).
 type Hours struct {
 	WorkStart string `json:"workStart"` // "HH:MM"
 	WorkEnd   string `json:"workEnd"`
@@ -19,23 +18,53 @@ type Hours struct {
 
 func defaultHours() Hours { return Hours{WorkStart: "09:00", WorkEnd: "18:00"} }
 
+// Meeting — Встреча, назначенная на конкретный день окна доступности.
+
+func pubID(prefix string, n int64) string { return fmt.Sprintf("%s-%d", prefix, n) }
+
+func parsePublicID(prefix, id string) (int64, bool) {
+	rest := strings.TrimPrefix(id, prefix+"-")
+	if rest == id {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// rowScanner — *sql.Row и компании.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// execer — общий интерфейс запросов вне и внутри транзакции; его
+// удовлетворяют и *sql.DB, и *sql.Tx.
+type execer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// Meeting — Встреча, назначенная на конкретный день окна доступности.
 type Meeting struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	DurationMin int       `json:"durationMin"` // продолжительность интервала
-	OwnerEmail  string    `json:"ownerEmail"`  // почта создателя: по ней проверяется занятость
-	OwnerName   string    `json:"ownerName"`   // имя организатора (необязательное, для отображения)
-	Date        string    `json:"date"`        // день, на который назначена встреча "2006-01-02"
+	DurationMin int       `json:"durationMin"` // продолжительность Интервала
+	OwnerEmail  string    `json:"ownerEmail"`  // email организатора: по нему проверяется занятость
+	OwnerName   string    `json:"ownerName"`   // имя организатора, необязательное
+	Date        string    `json:"date"`        // "2006-01-02"
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// Booking — Запись посетителя на Интервал Встречи.
 type Booking struct {
 	ID        string    `json:"id"`
 	MeetingID string    `json:"meetingId"`
-	Date      string    `json:"date"`  // "2026-11-20"
-	Start     string    `json:"start"` // "10:30"
-	End       string    `json:"end"`   // "11:00"
+	Date      string    `json:"date"`
+	Start     string    `json:"start"`
+	End       string    `json:"end"`
 	Name      string    `json:"name"`
 	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -43,45 +72,67 @@ type Booking struct {
 
 type DayAvailability struct {
 	Date string `json:"date"`
-	Free int    `json:"free"` // число свободных интервалов (бейдж «18 св.»)
+	Free int    `json:"free"` // число свободных Интервалов
 }
 
-// Ошибки различимы на уровне HTTP-кодов (Сценарий 2: конфликты).
+// Ошибки различимы на уровне HTTP-кодов.
 var (
 	ErrMeetingNotFound = fmt.Errorf("встреча не найдена")
-	ErrSlotUnavailable = fmt.Errorf("слот недоступен (серый или прошедший)")
-	ErrSlotTaken       = fmt.Errorf("слот занят в этой или другой встрече владельца")
+	ErrSlotUnavailable = fmt.Errorf("интервал недоступен (серый или прошедший)")
+	ErrSlotTaken       = fmt.Errorf("интервал занят в этой или другой встрече организатора")
 	ErrNameRequired    = fmt.Errorf("укажите имя")
 	ErrEmailRequired   = fmt.Errorf("укажите email")
-	ErrOwnerRequired   = fmt.Errorf("укажите email создателя")
+	ErrOwnerRequired   = fmt.Errorf("укажите email организатора")
 	ErrDateRequired    = fmt.Errorf("дата встречи обязательна и должна быть в окне доступности")
 	ErrOutsideWindow   = fmt.Errorf("дата вне окна доступности")
 )
 
-// Store — внутреннее хранилище на Go-структурах данных.
-// Заменится на embedded-хранилище, методы останутся теми же.
+const (
+	meetingCols = `id, name, description, duration_min, owner_email, owner_name, date, created_at`
+	bookingCols = `id, meeting_id, date, start, end, name, email, created_at`
+)
+
+// Store — хранилище на SQLite (ADR-0001). Публичные методы — тот же
+// интерфейс, что был у in-memory Store: handler'ы и тесты не изменились.
 type Store struct {
-	mu       sync.RWMutex
-	hours    map[string]map[string]Hours // owner email -> date -> границы дня
-	meetings map[string]*Meeting
-	bookings map[string]*Booking
-	seq      int64
-	now      func() time.Time // подменяется в тестах
+	db  *sql.DB
+	now func() time.Time // подменяется в тестах
 }
 
-func NewStore() *Store {
-	return &Store{
-		hours:    map[string]map[string]Hours{},
-		meetings: map[string]*Meeting{},
-		bookings: map[string]*Booking{},
-		now:      time.Now,
+// Open открывает (или создаёт) базу и прогоняет неприменённые миграции.
+// Одно писательское соединение (MaxOpenConns(1)): SQLite пишет
+// последовательно, проверяющий-then-insert в Book не требует внешних локов.
+func Open(path string) (*Store, error) {
+	dsn := path
+	if !strings.Contains(path, "?") {
+		dsn = path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+	if err := migrateDB(db); err != nil {
+		return nil, err
+	}
+	return &Store{db: db, now: time.Now}, nil
 }
 
-func (s *Store) nextID(prefix string) string {
-	s.seq++
-	return fmt.Sprintf("%s-%d", prefix, s.seq)
+// NewStore — изолированная in-memory база для тестов: та же схема и то же
+// поведение, ничего не переживает процесс.
+func NewStore() *Store {
+	s, err := Open(":memory:?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
+
+// Close освобождает соединение.
+func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) today() string { return s.now().Format("2006-01-02") }
 
@@ -98,155 +149,8 @@ func (s *Store) inWindow(date string) bool {
 	return date >= today && date <= s.windowLast()
 }
 
-// --- Границы рабочего дня: по почте создателя на конкретную дату ---
-
-// hoursAt — границы дня без захвата блокировки; вызывать только владея s.mu.
-func (s *Store) hoursAt(owner, date string) Hours {
-	if byDate, ok := s.hours[owner]; ok {
-		if h, ok := byDate[date]; ok {
-			return h
-		}
-	}
-	return defaultHours()
-}
-
-// WorkHours возвращает границы дня для пары (owner, date); если сохранённых
-// нет — дефолт 09:00–18:00.
-func (s *Store) WorkHours(owner, date string) Hours {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.hoursAt(owner, date)
-}
-
-// SetWorkHours сохраняет границы только для одной даты одного создателя —
-// остальные дни и другие пользователи не затрагиваются.
-func (s *Store) SetWorkHours(owner, date, workStart, workEnd string) error {
-	if !ValidEmail(owner) {
-		return ErrOwnerRequired
-	}
-	if _, err := time.Parse("2006-01-02", date); err != nil {
-		return fmt.Errorf("некорректная дата: %s", date)
-	}
-	st, ok1 := ParseHM(workStart)
-	en, ok2 := ParseHM(workEnd)
-	if !ok1 || !ok2 || en <= st {
-		return fmt.Errorf("некорректные границы рабочего дня: %s / %s", workStart, workEnd)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.hours[owner] == nil {
-		s.hours[owner] = map[string]Hours{}
-	}
-	s.hours[owner][date] = Hours{WorkStart: FormatHM(st), WorkEnd: FormatHM(en)}
-	return nil
-}
-
-// --- Встречи ---
-
-// CreateMeeting создаёт встречу, назначенную на конкретный день окна.
-func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEmail, ownerName, date string) (*Meeting, error) {
-	if name == "" {
-		return nil, fmt.Errorf("название обязательно")
-	}
-	if !ValidEmail(ownerEmail) {
-		return nil, ErrOwnerRequired
-	}
-	if !s.inWindow(date) {
-		return nil, ErrDateRequired
-	}
-	if durationMin <= 0 || durationMin > 24*60 {
-		return nil, fmt.Errorf("некорректная продолжительность: %d", durationMin)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m := &Meeting{
-		ID:          s.nextID("m"),
-		Name:        name,
-		Description: description,
-		DurationMin: durationMin,
-		OwnerEmail:  ownerEmail,
-		OwnerName:   ownerName,
-		Date:        date,
-		CreatedAt:   s.now().UTC(),
-	}
-	s.meetings[m.ID] = m
-	return m, nil
-}
-
-// Meetings возвращает все встречи (для посетителя) или встречи одного
-// создателя, если owner непустой (Сценарий 1: «список всех встреч»).
-func (s *Store) Meetings(owner string) []*Meeting {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]*Meeting, 0, len(s.meetings))
-	for _, m := range s.meetings {
-		if owner == "" || strings.EqualFold(m.OwnerEmail, owner) {
-			out = append(out, m)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Date != out[j].Date {
-			return out[i].Date < out[j].Date
-		}
-		return out[i].CreatedAt.Before(out[j].CreatedAt)
-	})
-	return out
-}
-
-func (s *Store) Meeting(id string) (*Meeting, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	m, ok := s.meetings[id]
-	return m, ok
-}
-
-// DeleteMeeting отменяет встречу: её интервалы снова свободны,
-// записи посетителей удаляются.
-func (s *Store) DeleteMeeting(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.meetings, id)
-	for bID, b := range s.bookings {
-		if b.MeetingID == id {
-			delete(s.bookings, bID)
-		}
-	}
-}
-
-// --- Занятость владельца ---
-
-// ownerBusy возвращает занятые отрезки дня во всех встречах владельца
-// (email) на указанную дату. Бронируя интервал одной встречи, посетитель
-// занимает время владельца — в другой его встрече этот отрезок уже нельзя
-// выбрать, даже если сетки интервалов не совпадают (сравнение пересечений).
-// Вызывать под блокировкой s.mu.
-func (s *Store) ownerBusy(ownerEmail, date string) []Interval {
-	busy := make([]Interval, 0)
-	ownerMeetings := map[string]bool{}
-	for _, m := range s.meetings {
-		if strings.EqualFold(m.OwnerEmail, ownerEmail) {
-			ownerMeetings[m.ID] = true
-		}
-	}
-	for _, b := range s.bookings {
-		if !ownerMeetings[b.MeetingID] || b.Date != date {
-			continue
-		}
-		st, ok1 := ParseHM(b.Start)
-		en, ok2 := ParseHM(b.End)
-		if ok1 && ok2 {
-			busy = append(busy, Interval{Start: st, End: en})
-		}
-	}
-	sort.Slice(busy, func(i, j int) bool { return busy[i].Start < busy[j].Start })
-	return busy
-}
-
-// --- Интервалы дня ---
-
-// dayNowMin возвращает «сейчас» в минутах для выбранного дня: дни в будущем и
-// прошлом получают специальные значения, чтобы ни один слот не считался
-// прошедшим / все считались прошедшими.
+// dayNowMin — «сейчас» в минутах для выбранного дня; дни в будущем и
+// прошлом получают DayInFuture / DayInPast.
 func (s *Store) dayNowMin(date string) int {
 	now := s.now()
 	today := now.Format("2006-01-02")
@@ -260,22 +164,205 @@ func (s *Store) dayNowMin(date string) int {
 	}
 }
 
-// DaySlots — сетка интервалов встречи на её день: границы рабочего дня
-// берутся для (owner, date), занятость — со сквозными пересечениями по
-// всем встречам владельца.
+// --- Рабочий день: пара (email, дата) ---
+
+func workHoursVia(e execer, owner, date string) Hours {
+	var st, en string
+	if err := e.QueryRow(
+		`SELECT work_start, work_end FROM work_hours WHERE owner_email = ? AND date = ?`,
+		owner, date).Scan(&st, &en); err != nil {
+		return defaultHours()
+	}
+	return Hours{WorkStart: st, WorkEnd: en}
+}
+
+// WorkHours возвращает границы дня для пары (owner, date); если пара не
+// сохранялась — дефолт 09:00–18:00.
+func (s *Store) WorkHours(owner, date string) Hours { return workHoursVia(s.db, owner, date) }
+
+// SetWorkHours сохраняет границы только для этой даты этого организатора.
+func (s *Store) SetWorkHours(owner, date, workStart, workEnd string) error {
+	if !ValidEmail(owner) {
+		return ErrOwnerRequired
+	}
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return fmt.Errorf("некорректная дата: %s", date)
+	}
+	st, ok1 := ParseHM(workStart)
+	en, ok2 := ParseHM(workEnd)
+	if !ok1 || !ok2 || en <= st {
+		return fmt.Errorf("некорректные границы рабочего дня: %s / %s", workStart, workEnd)
+	}
+	_, err := s.db.Exec(`INSERT INTO work_hours (owner_email, date, work_start, work_end)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(owner_email, date)
+		DO UPDATE SET work_start = excluded.work_start, work_end = excluded.work_end`,
+		owner, date, FormatHM(st), FormatHM(en))
+	return err
+}
+
+// --- Встречи ---
+
+func meetingFrom(row rowScanner) (*Meeting, bool) {
+	var (
+		id         int64
+		name, desc string
+		dur        int
+		oe, on     string
+		date       string
+		created    string
+	)
+	if err := row.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &created); err != nil {
+		return nil, false
+	}
+	t, _ := time.Parse(time.RFC3339Nano, created)
+	return &Meeting{ID: pubID("m", id), Name: name, Description: desc, DurationMin: dur,
+		OwnerEmail: oe, OwnerName: on, Date: date, CreatedAt: t}, true
+}
+
+func meetingByID(e execer, n int64) (*Meeting, bool) {
+	return meetingFrom(e.QueryRow(`SELECT `+meetingCols+` FROM meetings WHERE id = ?`, n))
+}
+
+// CreateMeeting создаёт Встречу, назначенную на конкретный день окна.
+func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEmail, ownerName, date string) (*Meeting, error) {
+	if name == "" {
+		return nil, fmt.Errorf("название обязательно")
+	}
+	if !ValidEmail(ownerEmail) {
+		return nil, ErrOwnerRequired
+	}
+	if !s.inWindow(date) {
+		return nil, ErrDateRequired
+	}
+	if durationMin <= 0 || durationMin > 24*60 {
+		return nil, fmt.Errorf("некорректная продолжительность: %d", durationMin)
+	}
+	createdAt := s.now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.Exec(`INSERT INTO meetings (name, description, duration_min, owner_email, owner_name, date, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		name, description, durationMin, ownerEmail, ownerName, date, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	t, _ := time.Parse(time.RFC3339Nano, createdAt)
+	return &Meeting{ID: pubID("m", id), Name: name, Description: description, DurationMin: durationMin,
+		OwnerEmail: ownerEmail, OwnerName: ownerName, Date: date, CreatedAt: t}, nil
+}
+
+// Meetings возвращает все Встречи (для посетителя) или Встречи одного
+// организатора, если owner непустой. Колонки email — COLLATE NOCASE,
+// регистр не значим.
+func (s *Store) Meetings(owner string) []*Meeting {
+	q := `SELECT ` + meetingCols + ` FROM meetings`
+	var args []any
+	if owner != "" {
+		q += ` WHERE owner_email = ?`
+		args = append(args, owner)
+	}
+	q += ` ORDER BY date, created_at, id`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := []*Meeting{}
+	for rows.Next() {
+		var (
+			id         int64
+			name, desc string
+			dur        int
+			oe, on     string
+			date       string
+			created    string
+		)
+		if err := rows.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &created); err != nil {
+			return out
+		}
+		t, _ := time.Parse(time.RFC3339Nano, created)
+		out = append(out, &Meeting{ID: pubID("m", id), Name: name, Description: desc, DurationMin: dur,
+			OwnerEmail: oe, OwnerName: on, Date: date, CreatedAt: t})
+	}
+	return out
+}
+
+func (s *Store) Meeting(id string) (*Meeting, bool) {
+	n, ok := parsePublicID("m", id)
+	if !ok {
+		return nil, false
+	}
+	return meetingByID(s.db, n)
+}
+
+// DeleteMeeting — Отмена Встречи. Её Записи удаляются (ON DELETE CASCADE):
+// отменённая Встреча исчезает из списков посетителя. План — статус
+// «Отменена» вместо стирания (README, «Дальнейшее развитие»).
+func (s *Store) DeleteMeeting(id string) {
+	n, ok := parsePublicID("m", id)
+	if !ok {
+		return
+	}
+	_, _ = s.db.Exec(`DELETE FROM meetings WHERE id = ?`, n)
+}
+
+// --- Занятость организатора ---
+
+// busyByOwner — занятые отрезки во всех Встречах организатора на диапазон
+// дат. Конфликт — пересечение отрезков, поэтому сетки разной
+// продолжительности сопоставляются корректно.
+func busyByOwner(e execer, ownerEmail, dateFrom, dateTo string) map[string][]Interval {
+	out := map[string][]Interval{}
+	rows, err := e.Query(`SELECT b.date, b.start, b.end FROM bookings b
+		JOIN meetings m ON m.id = b.meeting_id
+		WHERE m.owner_email = ? AND b.date >= ? AND b.date <= ?`,
+		ownerEmail, dateFrom, dateTo)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var date, st, en string
+		if err := rows.Scan(&date, &st, &en); err != nil {
+			return out
+		}
+		stMin, ok1 := ParseHM(st)
+		enMin, ok2 := ParseHM(en)
+		if ok1 && ok2 {
+			out[date] = append(out[date], Interval{Start: stMin, End: enMin})
+		}
+	}
+	return out
+}
+
+// --- Интервалы дня ---
+
+// DaySlots — сетка Интервалов Встречи на её день: границы рабочего дня для
+// (организатор, дата), сквозная занятость по всем Встречам организатора.
 func (s *Store) DaySlots(meetingID string) ([]Slot, bool) {
 	m, ok := s.Meeting(meetingID)
 	if !ok {
 		return nil, false
 	}
 	h := s.WorkHours(m.OwnerEmail, m.Date)
-	s.mu.RLock()
-	busy := s.ownerBusy(m.OwnerEmail, m.Date)
-	s.mu.RUnlock()
+	busy := busyByOwner(s.db, m.OwnerEmail, m.Date, m.Date)[m.Date]
 	return GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(m.Date), busy), true
 }
 
-// MeetingAvailability — свободные интервалы на день встречи (для карточек).
+// PreviewSlots — превью сетки дня для ещё не созданной Встречи (Сценарий 1:
+// организатор видит доступность, конкретный Интервал не выбирает).
+// Если owner задан, учитываются его уже забронированные Встречи.
+func (s *Store) PreviewSlots(ownerEmail, date string, durationMin int) []Slot {
+	h := s.WorkHours(ownerEmail, date)
+	var busy []Interval
+	if ownerEmail != "" {
+		busy = busyByOwner(s.db, ownerEmail, date, date)[date]
+	}
+	return GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(date), busy)
+}
+
+// MeetingAvailability — число свободных Интервалов на день Встречи
+// (для карточек «Свободно»).
 func (s *Store) MeetingAvailability(meetingID string) (DayAvailability, bool) {
 	slots, ok := s.DaySlots(meetingID)
 	if !ok {
@@ -285,34 +372,33 @@ func (s *Store) MeetingAvailability(meetingID string) (DayAvailability, bool) {
 	return DayAvailability{Date: m.Date, Free: FreeCount(slots)}, true
 }
 
-// PreviewSlots — превью сетки для ещё не созданной встречи (Сценарий 1):
-// границы для (owner, date), занятость владельца на эту дату.
-func (s *Store) PreviewSlots(ownerEmail, date string, durationMin int) []Slot {
-	h := s.WorkHours(ownerEmail, date)
-	var busy []Interval
-	if ownerEmail != "" {
-		s.mu.RLock()
-		busy = s.ownerBusy(ownerEmail, date)
-		s.mu.RUnlock()
-	}
-	return GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(date), busy)
-}
-
-// PreviewAvailability — окно доступности для создаваемой встречи: каждый день
-// считается по своим границам для этого владельца.
+// PreviewAvailability — окно доступности для создаваемой Встречи: каждый
+// день считается по своим границам этого организатора.
 func (s *Store) PreviewAvailability(durationMin int, ownerEmail string) []DayAvailability {
 	out := make([]DayAvailability, 0, windowDays)
 	base, _ := time.Parse("2006-01-02", s.today())
+	var allBusy map[string][]Interval
+	if ownerEmail != "" {
+		allBusy = busyByOwner(s.db, ownerEmail, s.today(), s.windowLast())
+	}
 	for i := 0; i < windowDays; i++ {
 		date := base.AddDate(0, 0, i).Format("2006-01-02")
-		out = append(out, DayAvailability{Date: date, Free: FreeCount(s.PreviewSlots(ownerEmail, date, durationMin))})
+		h := s.WorkHours(ownerEmail, date)
+		var busy []Interval
+		if allBusy != nil {
+			busy = allBusy[date]
+		}
+		slots := GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(date), busy)
+		out = append(out, DayAvailability{Date: date, Free: FreeCount(slots)})
 	}
 	return out
 }
 
 // --- Бронирование ---
 
-// Book занимает интервал встречи; день берётся из самой встречи.
+// Book занимает Интервал Встречи; день берётся из Встречи. Проверка
+// конфликта и вставка — в одной транзакции: два параллельных бронирования
+// одного Интервала не могут оба получить 201 (SQLite сериализуетWriter'ы).
 func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 	if name == "" {
 		return nil, ErrNameRequired
@@ -320,18 +406,29 @@ func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 	if !ValidEmail(email) {
 		return nil, ErrEmailRequired
 	}
-	m, ok := s.Meeting(meetingID)
+	mn, ok := parsePublicID("m", meetingID)
 	if !ok {
 		return nil, ErrMeetingNotFound
 	}
-	if !s.inWindow(m.Date) { // защита от данных, устаревших в памяти
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	m, ok := meetingByID(tx, mn)
+	if !ok {
+		return nil, ErrMeetingNotFound
+	}
+	today := s.today()
+	if m.Date < today || m.Date > s.windowLast() {
 		return nil, ErrOutsideWindow
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	h := s.hoursAt(m.OwnerEmail, m.Date)
-	slots := GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(m.Date), s.ownerBusy(m.OwnerEmail, m.Date))
+	h := workHoursVia(tx, m.OwnerEmail, m.Date)
+	busy := busyByOwner(tx, m.OwnerEmail, m.Date, m.Date)[m.Date]
+	slots := GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(m.Date), busy)
 	slot, allowed := SlotAllowed(slots, start)
 	if !allowed {
 		if slot.Status == SlotTaken {
@@ -339,40 +436,53 @@ func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 		}
 		return nil, ErrSlotUnavailable
 	}
-	b := &Booking{
-		ID:        s.nextID("b"),
-		MeetingID: meetingID,
-		Date:      m.Date,
-		Start:     start,
-		End:       slot.End,
-		Name:      name,
-		Email:     email,
-		CreatedAt: s.now().UTC(),
+
+	createdAt := s.now().UTC().Format(time.RFC3339Nano)
+	res, err := tx.Exec(`INSERT INTO bookings (meeting_id, date, start, end, name, email, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		mn, m.Date, start, slot.End, name, email, createdAt)
+	if err != nil {
+		return nil, err
 	}
-	s.bookings[b.ID] = b
-	return b, nil
+	id, _ := res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	t, _ := time.Parse(time.RFC3339Nano, createdAt)
+	return &Booking{ID: pubID("b", id), MeetingID: m.ID, Date: m.Date, Start: start, End: slot.End,
+		Name: name, Email: email, CreatedAt: t}, nil
 }
 
-// BookingsByUser — все записи посетителя по email, отсортированы по времени.
+// BookingsByUser — все Записи посетителя по email, отсортированы по времени.
 func (s *Store) BookingsByUser(email string) []*Booking {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]*Booking, 0)
-	for _, b := range s.bookings {
-		if strings.EqualFold(b.Email, email) {
-			out = append(out, b)
-		}
+	rows, err := s.db.Query(`SELECT `+bookingCols+` FROM bookings WHERE email = ?
+		ORDER BY date, start, id`, email)
+	if err != nil {
+		return nil
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Date != out[j].Date {
-			return out[i].Date < out[j].Date
+	defer rows.Close()
+	out := []*Booking{}
+	for rows.Next() {
+		var (
+			id        int64
+			meetingID int64
+			date, st  string
+			en        string
+			nm        string
+			em        string
+			created   string
+		)
+		if err := rows.Scan(&id, &meetingID, &date, &st, &en, &nm, &em, &created); err != nil {
+			return out
 		}
-		return out[i].Start < out[j].Start
-	})
+		t, _ := time.Parse(time.RFC3339Nano, created)
+		out = append(out, &Booking{ID: pubID("b", id), MeetingID: pubID("m", meetingID),
+			Date: date, Start: st, End: en, Name: nm, Email: em, CreatedAt: t})
+	}
 	return out
 }
 
-// IsPast — встреча закончилась (Сценарий 2: автоперенос в «Прошедшие»).
+// IsPast — Встреча закончилась (автоперенос Записи в группу «Прошедшие»).
 func (s *Store) IsPast(b *Booking) bool {
 	now := s.now()
 	endMin, ok := ParseHM(b.End)

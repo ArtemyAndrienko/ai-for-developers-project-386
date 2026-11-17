@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -9,6 +10,7 @@ import (
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	s := NewStore()
+	t.Cleanup(func() { _ = s.Close() })
 	// Фиксируем «сейчас»: понедельник 16.11.2026, 12:00 локального времени.
 	fixed := time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local)
 	s.now = func() time.Time { return fixed }
@@ -285,11 +287,10 @@ func TestBook_Rejections(t *testing.T) {
 	if _, err := s.Book("m-nope", "09:00", "n", "e@x.io"); !errors.Is(err, ErrMeetingNotFound) {
 		t.Errorf("несуществующая встреча: %v", err)
 	}
-	// Встреча задним числом с датой вне окна (данные «устарели» в памяти).
-	stale := &Meeting{ID: "m-stale", Name: "Просроченная", DurationMin: 30, OwnerEmail: "boss@x.io", Date: "2026-11-10"}
-	s.mu.Lock()
-	s.meetings[stale.ID] = stale
-	s.mu.Unlock()
+	// «Сейчас» переезжает за пределы окна доступности — дата существующей
+	// встречи устаревает, бронь должна отклоняться.
+	stale := mustMeeting(t, s, "Просроченная", 30, "boss@x.io", "2026-11-17")
+	s.now = func() time.Time { return time.Date(2026, 12, 20, 12, 0, 0, 0, time.Local) }
 	if _, err := s.Book(stale.ID, "09:00", "Иван", "ivan@x.io"); !errors.Is(err, ErrOutsideWindow) {
 		t.Errorf("бронь встречи вне окна: %v", err)
 	}
@@ -312,7 +313,7 @@ func TestBook_TailSlotRejected(t *testing.T) {
 	}
 }
 
-// Сценарий 2: прошедшая встреча попадает в «Прошедшие», будущая — нет.
+// Сценарий 2: после окончания Встречи её Запись попадает в «Прошедшие».
 func TestIsPast_Grouping(t *testing.T) {
 	s := newTestStore(t)
 	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
@@ -323,15 +324,72 @@ func TestIsPast_Grouping(t *testing.T) {
 	if s.IsPast(future) {
 		t.Errorf("будущая встреча не должна быть past")
 	}
-	pastB := &Booking{ID: "b-old", MeetingID: m.ID, Date: "2026-11-10", Start: "09:00", End: "09:30", Email: "ivan@example.com", Name: "Иван"}
-	s.mu.Lock()
-	s.bookings[pastB.ID] = pastB
-	s.mu.Unlock()
-	if !s.IsPast(pastB) {
-		t.Errorf("встреча 10.11 должна быть прошедшей")
+
+	// Перематываем «сейчас» за окончание брони 09:00–09:30.
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local) }
+	if !s.IsPast(future) {
+		t.Errorf("после окончания Встреча должна попасть в «Прошедшие»")
+	}
+
+	m2 := mustMeeting(t, s, "Второй звонок", 30, "boss@x.io", "2026-11-18")
+	if _, err := s.Book(m2.ID, "09:00", "Иван", "ivan@example.com"); err != nil {
+		t.Fatal(err)
 	}
 	bs := s.BookingsByUser("ivan@example.com")
-	if len(bs) != 2 || bs[0].Date != "2026-11-10" {
+	if len(bs) != 2 || bs[0].Date != "2026-11-17" || bs[1].Date != "2026-11-18" {
 		t.Errorf("сортировка записей по времени: %+v", bs)
+	}
+}
+
+// Ядро итерации (ADR-0001): данные переживают перезапуск процесса —
+// то же окно файла, новое соединение, миграции не повторяются.
+func TestPersistAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calendar.db")
+	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local) }
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = fixed
+	m := mustMeeting(t, s, "Переживает рестарт", 30, "boss@x.io", "2026-11-17")
+	if err := s.SetWorkHours("boss@x.io", "2026-11-20", "10:00", "12:00"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.Book(m.ID, "10:00", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path) // fresh соединение поверх WAL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	s2.now = fixed
+
+	if ms := s2.Meetings("boss@x.io"); len(ms) != 1 || ms[0].ID != m.ID || ms[0].CreatedAt.IsZero() {
+		t.Errorf("встреча не пережила рестарт: %+v", ms)
+	}
+	if h := s2.WorkHours("boss@x.io", "2026-11-20"); h.WorkStart != "10:00" || h.WorkEnd != "12:00" {
+		t.Errorf("границы дня не пережили рестарт: %+v", h)
+	}
+	bs := s2.BookingsByUser("ivan@example.com")
+	if len(bs) != 1 || bs[0].ID != b.ID || bs[0].End != "10:30" {
+		t.Errorf("запись не пережила рестарт: %+v", bs)
+	}
+	// Конфликт после рестарта по-прежнему блокирует слот.
+	if _, err := s2.Book(m.ID, "10:00", "Оля", "olya@example.com"); !errors.Is(err, ErrSlotTaken) {
+		t.Errorf("после рестарта ожидан 409-конфликт, получили %v", err)
+	}
+	var migrations int
+	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
+		t.Fatal(err)
+	}
+	if migrations != 1 {
+		t.Errorf("миграция должна примениться один раз, посчитано %d", migrations)
 	}
 }

@@ -237,7 +237,7 @@ mise run setup   # npm install во frontend/
 <!-- Добавьте примеры запуска и запись asciinema — именно это смотрит работодатель -->
 
 ```bash
-mise run dev-backend    # API на http://localhost:8080 (демо-встреча создаётся при старте)
+mise run dev-backend    # API на http://localhost:8080 (SQLite: данные в file, демо-встреча — при пустой базе)
 mise run dev-frontend   # UI на http://localhost:5173
 ```
 

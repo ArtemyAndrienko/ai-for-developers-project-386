@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -216,17 +217,23 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
-	srv := &server{store: NewStore()}
+	store, dbPath, err := openStore()
+	if err != nil {
+		log.Fatal(err)
+	}
+	srv := &server{store: store}
 
-	// Демо-данные для пилотной версии, чтобы фронтенд не был пустым:
-	// встреча на «послезавтра».
+	// Демо-данные только при пустой базе, иначе персистентный календарь
+	// каждый рестарт плодил бы новые «Демо-звонки».
 	demo, _ := strconv.Atoi(os.Getenv("DEMO_DAYS_AHEAD"))
 	if demo <= 0 {
 		demo = 2
 	}
-	demoDate := time.Now().AddDate(0, 0, demo).Format("2006-01-02")
-	if _, err := srv.store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, "demo@calendar.app", "Демо-организатор", demoDate); err != nil {
-		log.Fatal(err)
+	if len(store.Meetings("")) == 0 {
+		demoDate := time.Now().AddDate(0, 0, demo).Format("2006-01-02")
+		if _, err := store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, "demo@calendar.app", "Демо-организатор", demoDate); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -237,6 +244,25 @@ func main() {
 	mux.HandleFunc("/api/preview/{sub}", srv.handlePreview)
 	mux.HandleFunc("/api/bookings", srv.handleBookings)
 
-	log.Printf("calendar api on http://localhost%s", addr)
+	log.Printf("calendar api on http://localhost%s (db: %s)", addr, dbPath)
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// openStore — персистентная база из env DATA_PATH; каталог создаём,
+// SQLite сам файл сделает.
+func openStore() (*Store, string, error) {
+	path := os.Getenv("DATA_PATH")
+	if path == "" {
+		path = "data/calendar.db"
+	}
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, "", err
+		}
+	}
+	store, err := Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return store, path, nil
 }
