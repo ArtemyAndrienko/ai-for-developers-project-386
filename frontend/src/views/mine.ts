@@ -8,6 +8,7 @@ import {
   cancelSourceLabel,
   groupBookings,
   HIDE_PAST_KEY,
+  isCancelledOrPast,
   LAST_EMAIL_KEY,
   ruLongDate,
 } from "../utils";
@@ -81,7 +82,7 @@ async function fetchBookings(email: string): Promise<BookingView[]> {
 
 function listHtml(bookings: BookingView[], hidePast: boolean): string {
   // Отменённые Записи — не предстоящие: попадают в «Прошедшие» с бейджем.
-  const grouped = bookings.map((b) => ({ ...b, past: b.past || b.state === "cancelled" }));
+  const grouped = bookings.map((b) => ({ ...b, past: isCancelledOrPast(b) }));
   const { upcoming, past } = groupBookings(grouped);
   const organizer = (b: BookingView) =>
     [b.meetingOwnerName, b.meetingOwnerEmail].filter(Boolean).join(" · ");
@@ -98,7 +99,7 @@ function listHtml(bookings: BookingView[], hidePast: boolean): string {
       <div class="muted">${b.name}, ${b.email}</div>
       <div class="muted">Создано: ${new Date(b.createdAt).toLocaleString("ru-RU")}</div>
       ${
-        b.past || b.state === "cancelled"
+        isCancelledOrPast(b)
           ? ""
           : `<button class="btn danger" data-cancel="${b.id}">Отменить</button>`
       }

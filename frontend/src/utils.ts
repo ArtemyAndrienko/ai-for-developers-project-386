@@ -55,6 +55,12 @@ export const emailLike = (s: string) => /\S+@\S+\.\S+/.test(s.trim());
 
 import type { BookingView } from "./types";
 
+// Единый предикат «не предстоящая»: завершившаяся или отменённая Запись —
+// группа «Прошедшие», без кнопки отмены (используется и для конфликтов).
+export function isCancelledOrPast(b: Pick<BookingView, "past" | "state">): boolean {
+  return b.past || b.state === "cancelled";
+}
+
 // Мягкий конфликт (GLOSSARY: «Конфликт»): пересечение интервала с будущей
 // записью посетителя в ДРУГОЙ встрече. Бронированию не мешает — только
 // предупреждаем. Отменённые Записи не пересекаются: их Интервалы свободны.
@@ -69,8 +75,7 @@ export function visitorClashes(
   const e = hmToMin(slotEnd);
   return bookings.filter(
     (b) =>
-      !b.past &&
-      b.state !== "cancelled" &&
+      !isCancelledOrPast(b) &&
       b.meetingId !== meetingId &&
       b.date === meetingDate &&
       hmToMin(b.start) < e &&

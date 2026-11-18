@@ -7,6 +7,7 @@ import {
   emailLike,
   groupBookings,
   hmToMin,
+  isCancelledOrPast,
   isoDate,
   slotLabel,
   visitorClashes,
@@ -50,6 +51,23 @@ describe("интервалы", () => {
     expect(slotLabel("free")).toBe("Свободно");
     expect(slotLabel("taken")).toBe("Занято");
     expect(slotLabel("tail")).toBe("Мало времени");
+  });
+});
+
+describe("предикат «не предстоящая»", () => {
+  const b = (over: Record<string, unknown>) =>
+    ({ past: false, state: "active", ...over }) as BookingView;
+
+  it("предстоящая активная Запись — не прошедшая и не отменённая", () => {
+    expect(isCancelledOrPast(b({}))).toBe(false);
+  });
+
+  it("завершившаяся Запись — true", () => {
+    expect(isCancelledOrPast(b({ past: true }))).toBe(true);
+  });
+
+  it("отменённая предстоящая Запись — true (группа «Прошедшие», без кнопки)", () => {
+    expect(isCancelledOrPast(b({ state: "cancelled" }))).toBe(true);
   });
 });
 
