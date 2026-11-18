@@ -296,6 +296,64 @@ func TestBook_Rejections(t *testing.T) {
 	}
 }
 
+// Отмена переживает перезакрытие базы: состояние и освобождённый Интервал
+// берутся из файла, миграции не повторяются.
+func TestCancelBooking_PersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calendar.db")
+	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local) }
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = fixed
+	m := mustMeeting(t, s, "Переживает рестарт", 30, "boss@x.io", "2026-11-17")
+	if _, err := s.Book(m.ID, "09:00", "Петя", "petya@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.Book(m.ID, "10:00", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelBooking(b.ID, "ivan@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path) // fresh соединение поверх WAL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	s2.now = fixed
+
+	bs := s2.BookingsByUser("ivan@example.com")
+	if len(bs) != 1 || bs[0].ID != b.ID || bs[0].State != BookingCancelled {
+		t.Errorf("отменённая запись не пережила рестарт: %+v", bs)
+	}
+	// После рестарта чужая активная запись по-прежнему занимает свой Интервал…
+	if _, err := s2.Book(m.ID, "09:00", "Оля", "olya@example.com"); !errors.Is(err, ErrSlotTaken) {
+		t.Errorf("активная запись должна оставаться занятой: %v", err)
+	}
+	// …а освобождённый Интервал снова свободен и для прежнего посетителя.
+	if _, err := s2.Book(m.ID, "10:00", "Иван", "ivan@example.com"); err != nil {
+		t.Errorf("освобождённый Интервал после рестарта должен быть доступен: %v", err)
+	}
+	// …а активная запись Пети осталась active.
+	if ps := s2.BookingsByUser("petya@example.com"); len(ps) != 1 || ps[0].State != BookingActive {
+		t.Errorf("активная запись после рестарта должна остаться active: %+v", ps)
+	}
+	var migrations int
+	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
+		t.Fatal(err)
+	}
+	if migrations != 2 {
+		t.Errorf("миграции должны примениться по одному разу, посчитано %d", migrations)
+	}
+}
+
 // Хвостовой остаток на день встречи нельзя забронировать.
 func TestBook_TailSlotRejected(t *testing.T) {
 	s := newTestStore(t)
