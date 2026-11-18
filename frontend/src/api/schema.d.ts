@@ -45,7 +45,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Список встреч; ?owner= фильтрует по организателю */
+        /** @description Список доступных встреч (отменённые исключены); ?owner= фильтрует по организателю */
         get: operations["MeetingsApi_list"];
         put?: never;
         /** @description Создать встречу на конкретный день окна доступности */
@@ -66,7 +66,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** @description Отменить встречу: её интервалы снова свободны */
+        /** @description Отмена Встречи Организатором (мягкая): Встреча переходит в cancelled, её активные Записи — в «Отменена» одной транзакцией; повторная отмена идемпотентна (тот же 204) */
         delete: operations["MeetingsApi_remove"];
         options?: never;
         head?: never;
@@ -80,7 +80,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Свободные интервалы на день встречи */
+        /** @description Свободные интервалы на день встречи; 404 — встречи нет или она отменена (не в продаже) */
         get: operations["MeetingsApi_availability"];
         put?: never;
         post?: never;
@@ -99,7 +99,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Забронировать интервал; 409 — занят (включая другие встречи организатора) */
+        /** @description Забронировать интервал; 409 — занят (включая другие встречи организатора), 422 — встреча отменена */
         post: operations["MeetingsApi_book"];
         delete?: never;
         options?: never;
@@ -114,7 +114,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Сетка интервалов дня встречи */
+        /** @description Сетка интервалов дня встречи; 404 — встречи нет или она отменена (не в продаже) */
         get: operations["MeetingsApi_slots"];
         put?: never;
         post?: never;
@@ -213,6 +213,8 @@ export interface components {
             meetingName: string;
             meetingOwnerName: string;
             meetingOwnerEmail: string;
+            /** @description Состояние Встречи записи: источник «Отменена» выводится (cancelled у Встречи — отмена Организатором), отдельно не хранится */
+            meetingState: components["schemas"]["MeetingState"];
             /** @description Встреча уже закончилась — попадает в группу «Прошедшие» */
             past: boolean;
         } & components["schemas"]["Booking"];
@@ -246,9 +248,16 @@ export interface components {
              * @description День, на который назначена встреча
              */
             date: string;
+            /** @description Состояние Встречи; отменённая не выдаётся в списках и не бронируется */
+            state: components["schemas"]["MeetingState"];
             /** Format: date-time */
             createdAt: string;
         };
+        /**
+         * @description Состояние Встречи: cancelled — терминальное (Отмена Встречи Организатором)
+         * @enum {string}
+         */
+        MeetingState: "active" | "cancelled";
         /** @description Тело POST /meetings */
         NewMeeting: {
             name: string;

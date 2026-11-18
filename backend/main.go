@@ -26,12 +26,14 @@ func writeErr(w http.ResponseWriter, code int, err error) {
 }
 
 // bookingView — запись в представлении для клиента: встреча + флаг «пройдена»
-// + данные организатора (имя и/или email для вкладки «Мои записи»).
+// + данные организатора (имя и/или email для вкладки «Мои записи») + состояние
+// Встречи (источник «Отменена» выводится на клиенте, не хранится).
 type bookingView struct {
 	*Booking
 	MeetingName       string `json:"meetingName"`
 	MeetingOwnerName  string `json:"meetingOwnerName"`
 	MeetingOwnerEmail string `json:"meetingOwnerEmail"`
+	MeetingState      string `json:"meetingState"`
 	Past              bool   `json:"past"`
 }
 
@@ -201,11 +203,12 @@ func (srv *server) handleBookings(w http.ResponseWriter, r *http.Request) {
 	}
 	views := []bookingView{}
 	for _, b := range srv.store.BookingsByUser(email) {
-		view := bookingView{Booking: b, Past: srv.store.IsPast(b)}
+		view := bookingView{Booking: b, Past: srv.store.IsPast(b), MeetingState: MeetingActive}
 		if m, ok := srv.store.Meeting(b.MeetingID); ok {
 			view.MeetingName = m.Name
 			view.MeetingOwnerName = m.OwnerName
 			view.MeetingOwnerEmail = m.OwnerEmail
+			view.MeetingState = m.State
 		}
 		views = append(views, view)
 	}

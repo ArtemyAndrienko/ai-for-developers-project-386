@@ -39,6 +39,15 @@ model WorkHoursView extends WorkHours {
   date: plainDate;
 }
 
+@doc("Состояние Встречи: cancelled — терминальное (Отмена Встречи Организатором)")
+enum MeetingState {
+  @doc("Встреча активна: доступна для записи")
+  active,
+
+  @doc("Встреча отменена: исчезает из списков, её Записи отменены")
+  cancelled,
+}
+
 @doc("Запись на встречу")
 model Meeting {
   @key id: string;
@@ -56,6 +65,9 @@ model Meeting {
 
   @doc("День, на который назначена встреча")
   date: plainDate;
+
+  @doc("Состояние Встречи; отменённая не выдаётся в списках и не бронируется")
+  state: MeetingState;
 
   createdAt: utcDateTime;
 }
@@ -125,6 +137,9 @@ model BookingView extends Booking {
   meetingOwnerName: string;
   meetingOwnerEmail: string;
 
+  @doc("Состояние Встречи записи: источник «Отменена» выводится (cancelled у Встречи — отмена Организатором), отдельно не хранится")
+  meetingState: MeetingState;
+
   @doc("Встреча уже закончилась — попадает в группу «Прошедшие»")
   past: boolean;
 }
@@ -160,7 +175,7 @@ interface WorkHoursApi {
 @route("/api/meetings")
 interface MeetingsApi {
   @get
-  @doc("Список встреч; ?owner= фильтрует по организателю")
+  @doc("Список доступных встреч (отменённые исключены); ?owner= фильтрует по организателю")
   list(@query owner?: string): Meeting[] | ApiError<400>;
 
   @post
@@ -174,7 +189,7 @@ interface MeetingsApi {
 
   @route("/{id}")
   @delete
-  @doc("Отменить встречу: её интервалы снова свободны")
+  @doc("Отмена Встречи Организатором (мягкая): Встреча переходит в cancelled, её активные Записи — в «Отменена» одной транзакцией; повторная отмена идемпотентна (тот же 204)")
   remove(@path id: string):
     | {
         @statusCode code: 204;
@@ -183,17 +198,17 @@ interface MeetingsApi {
 
   @route("/{id}/availability")
   @get
-  @doc("Свободные интервалы на день встречи")
+  @doc("Свободные интервалы на день встречи; 404 — встречи нет или она отменена (не в продаже)")
   availability(@path id: string): DayAvailability | ApiError<404>;
 
   @route("/{id}/slots")
   @get
-  @doc("Сетка интервалов дня встречи")
+  @doc("Сетка интервалов дня встречи; 404 — встречи нет или она отменена (не в продаже)")
   slots(@path id: string): Slot[] | ApiError<404>;
 
   @route("/{id}/book")
   @post
-  @doc("Забронировать интервал; 409 — занят (включая другие встречи организатора)")
+  @doc("Забронировать интервал; 409 — занят (включая другие встречи организатора), 422 — встреча отменена")
   book(@path id: string, @body body: BookRequest):
     | {
         @statusCode code: 201;
