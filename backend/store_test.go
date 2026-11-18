@@ -341,6 +341,29 @@ func TestIsPast_Grouping(t *testing.T) {
 	}
 }
 
+// Отмена Записи Посетителем: Интервал мгновенно освобождается, в том числе
+// в других Встречах того же Организатора (конфликт по пересечению).
+func TestCancelBooking_ReleasesSlot(t *testing.T) {
+	s := newTestStore(t)
+	m30 := mustMeeting(t, s, "Короткий колл", 30, "boss@x.io", "2026-11-17")
+	m60 := mustMeeting(t, s, "Часовой разбор", 60, "boss@x.io", "2026-11-17")
+
+	b, err := s.Book(m30.ID, "10:30", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Book(m60.ID, "10:00", "Оля", "olya@example.com"); !errors.Is(err, ErrSlotTaken) {
+		t.Fatalf("до отмены 10:00–11:00 занят пересечением с 10:30–11:00: %v", err)
+	}
+
+	if err := s.CancelBooking(b.ID, "ivan@example.com"); err != nil {
+		t.Fatalf("отмена собственной Записи: %v", err)
+	}
+	if _, err := s.Book(m60.ID, "10:00", "Оля", "olya@example.com"); err != nil {
+		t.Errorf("после отмены Интервал свободен во всех Встречах организатора: %v", err)
+	}
+}
+
 // Ядро итерации (ADR-0001): данные переживают перезапуск процесса —
 // то же окно файла, новое соединение, миграции не повторяются.
 func TestPersistAcrossReopen(t *testing.T) {
@@ -389,7 +412,7 @@ func TestPersistAcrossReopen(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 1 {
+	if migrations != 2 {
 		t.Errorf("миграция должна примениться один раз, посчитано %d", migrations)
 	}
 }

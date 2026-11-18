@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -67,8 +68,15 @@ type Booking struct {
 	End       string    `json:"end"`
 	Name      string    `json:"name"`
 	Email     string    `json:"email"`
+	State     string    `json:"state"` // "active" | "cancelled"
 	CreatedAt time.Time `json:"createdAt"`
 }
+
+// Состояния Записи; cancelled — терминальный (Отмена Записи Посетителем).
+const (
+	BookingActive    = "active"
+	BookingCancelled = "cancelled"
+)
 
 type DayAvailability struct {
 	Date string `json:"date"`
@@ -85,11 +93,12 @@ var (
 	ErrOwnerRequired   = fmt.Errorf("укажите email организатора")
 	ErrDateRequired    = fmt.Errorf("дата встречи обязательна и должна быть в окне доступности")
 	ErrOutsideWindow   = fmt.Errorf("дата вне окна доступности")
+	ErrBookingNotFound = fmt.Errorf("запись не найдена")
 )
 
 const (
 	meetingCols = `id, name, description, duration_min, owner_email, owner_name, date, created_at`
-	bookingCols = `id, meeting_id, date, start, end, name, email, created_at`
+	bookingCols = `id, meeting_id, date, start, end, name, email, state, created_at`
 )
 
 // Store — хранилище на SQLite (ADR-0001). Публичные методы — тот же
@@ -310,12 +319,14 @@ func (s *Store) DeleteMeeting(id string) {
 
 // busyByOwner — занятые отрезки во всех Встречах организатора на диапазон
 // дат. Конфликт — пересечение отрезков, поэтому сетки разной
-// продолжительности сопоставляются корректно.
+// продолжительности сопоставляются корректно. Отменённые Записи время
+// не занимают.
 func busyByOwner(e execer, ownerEmail, dateFrom, dateTo string) map[string][]Interval {
 	out := map[string][]Interval{}
 	rows, err := e.Query(`SELECT b.date, b.start, b.end FROM bookings b
 		JOIN meetings m ON m.id = b.meeting_id
-		WHERE m.owner_email = ? AND b.date >= ? AND b.date <= ?`,
+		WHERE m.owner_email = ? AND b.date >= ? AND b.date <= ?
+		AND b.state = 'active'`,
 		ownerEmail, dateFrom, dateTo)
 	if err != nil {
 		return out
@@ -450,7 +461,7 @@ func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 	}
 	t, _ := time.Parse(time.RFC3339Nano, createdAt)
 	return &Booking{ID: pubID("b", id), MeetingID: m.ID, Date: m.Date, Start: start, End: slot.End,
-		Name: name, Email: email, CreatedAt: t}, nil
+		Name: name, Email: email, State: BookingActive, CreatedAt: t}, nil
 }
 
 // BookingsByUser — все Записи посетителя по email, отсортированы по времени.
@@ -470,16 +481,48 @@ func (s *Store) BookingsByUser(email string) []*Booking {
 			en        string
 			nm        string
 			em        string
+			state     string
 			created   string
 		)
-		if err := rows.Scan(&id, &meetingID, &date, &st, &en, &nm, &em, &created); err != nil {
+		if err := rows.Scan(&id, &meetingID, &date, &st, &en, &nm, &em, &state, &created); err != nil {
 			return out
 		}
 		t, _ := time.Parse(time.RFC3339Nano, created)
 		out = append(out, &Booking{ID: pubID("b", id), MeetingID: pubID("m", meetingID),
-			Date: date, Start: st, End: en, Name: nm, Email: em, CreatedAt: t})
+			Date: date, Start: st, End: en, Name: nm, Email: em, State: state, CreatedAt: t})
 	}
 	return out
+}
+
+// CancelBooking — Отмена Записи Посетителем: Запись переходит в терминальный
+// «cancelled», её Интервал мгновенно освобождается. Переход — в транзакции
+// (как Book): проверка и запись атомарны.
+func (s *Store) CancelBooking(bookingID, email string) error {
+	n, ok := parsePublicID("b", bookingID)
+	if !ok {
+		return ErrBookingNotFound
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var state string
+	if err := tx.QueryRow(`SELECT state FROM bookings WHERE id = ?`, n).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrBookingNotFound
+		}
+		return err
+	}
+	if state == BookingCancelled {
+		return nil
+	}
+	if _, err := tx.Exec(`UPDATE bookings SET state = 'cancelled' WHERE id = ?`, n); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // IsPast — Встреча закончилась (автоперенос Записи в группу «Прошедшие»).
