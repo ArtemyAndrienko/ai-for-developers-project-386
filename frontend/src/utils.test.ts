@@ -72,6 +72,7 @@ describe("мягкий конфликт посетителя (GLOSSARY: Конф
   const other = (over: Record<string, unknown>) =>
     ({
       past: false,
+      state: "active",
       meetingId: "m-9",
       date: "2026-11-20",
       start: "10:00",
@@ -92,6 +93,11 @@ describe("мягкий конфликт посетителя (GLOSSARY: Конф
     expect(visitorClashes([other({ meetingId: "m-1" })], "m-1", "2026-11-20", "10:00", "10:30")).toHaveLength(0);
     expect(visitorClashes([other({ date: "2026-11-21" })], "m-1", "2026-11-20", "10:00", "10:30")).toHaveLength(0);
     expect(visitorClashes([other({ past: true })], "m-1", "2026-11-20", "10:00", "10:30")).toHaveLength(0);
+  });
+
+  it("отменённая запись не конфликтует — её Интервал свободен", () => {
+    const clashes = visitorClashes([other({ state: "cancelled" })], "m-1", "2026-11-20", "10:00", "10:30");
+    expect(clashes).toHaveLength(0);
   });
 });
 

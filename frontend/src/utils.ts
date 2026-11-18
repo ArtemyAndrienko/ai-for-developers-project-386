@@ -57,7 +57,7 @@ import type { BookingView } from "./types";
 
 // Мягкий конфликт (GLOSSARY: «Конфликт»): пересечение интервала с будущей
 // записью посетителя в ДРУГОЙ встрече. Бронированию не мешает — только
-// предупреждаем.
+// предупреждаем. Отменённые Записи не пересекаются: их Интервалы свободны.
 export function visitorClashes(
   bookings: BookingView[],
   meetingId: string,
@@ -70,6 +70,7 @@ export function visitorClashes(
   return bookings.filter(
     (b) =>
       !b.past &&
+      b.state !== "cancelled" &&
       b.meetingId !== meetingId &&
       b.date === meetingDate &&
       hmToMin(b.start) < e &&
