@@ -516,7 +516,7 @@ func TestCancelBooking_WrongEmailRejected(t *testing.T) {
 	if err := s.CancelBooking(b.ID, "IVAN@EXAMPLE.COM"); err != nil {
 		t.Errorf("совпадение email без учёта регистра: %v", err)
 	}
-	// Отклонённая отмена не освободила Интервал — уже проверено выше: слот
+	// Отклонённая отмена не освободила Интервал — уже проверено выше: Интервал
 	// занят до успешной отмены, а после неё свободен.
 	if _, err := s.Book(m.ID, "09:00", "Оля", "olya@example.com"); err != nil {
 		t.Errorf("после успешной отмены Интервал свободен: %v", err)
@@ -616,7 +616,7 @@ func TestCancelBooking_IgnoredInOwnerBusy(t *testing.T) {
 	_ = kept
 }
 
-// Бронь на отменённую Встречу отклоняется различимой ошибкой
+// Запись на отменённую Встречу отклоняется различимой ошибкой
 // (handler — 422): Встреча не в продаже, но её id Посетитель знать может.
 func TestBook_CancelledMeetingRejected(t *testing.T) {
 	s := newTestStore(t)
@@ -624,7 +624,7 @@ func TestBook_CancelledMeetingRejected(t *testing.T) {
 	s.DeleteMeeting(m.ID)
 
 	if _, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com"); !errors.Is(err, ErrMeetingCancelled) {
-		t.Errorf("бронь на отменённую Встречу: %v, хотим ErrMeetingCancelled", err)
+		t.Errorf("запись на отменённую Встречу: %v, хотим ErrMeetingCancelled", err)
 	}
 }
 
@@ -648,7 +648,7 @@ func TestCancelMeeting_FreesOwnerTime(t *testing.T) {
 		t.Errorf("после Отмены Встречи Интервал свободен в другой её встрече того же организатора: %v", err)
 	}
 	if statuses := freeStarts(t, s, m60.ID); statuses["10:00"] != SlotTaken {
-		t.Errorf("свежая бронь 10:00 в 60-мин сетке должна быть занята: %s", statuses["10:00"])
+		t.Errorf("свежая запись 10:00 в 60-мин сетке должна быть занята: %s", statuses["10:00"])
 	}
 }
 
@@ -692,7 +692,7 @@ func TestCancelMeeting_PersistsAcrossReopen(t *testing.T) {
 		t.Errorf("отменённая Запись не пережила рестарт: %+v", bs)
 	}
 	if _, err := s2.Book(m.ID, "09:00", "Оля", "olya@example.com"); !errors.Is(err, ErrMeetingCancelled) {
-		t.Errorf("после рестарта бронь отменённой Встречи должна отклоняться: %v", err)
+		t.Errorf("после рестарта запись отменённой Встречи должна отклоняться: %v", err)
 	}
 }
 

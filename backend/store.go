@@ -459,7 +459,7 @@ func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 	if !ok {
 		return nil, ErrMeetingNotFound
 	}
-	// Отменённая Встреча «не в продаже»: бронь отклоняется различимой ошибкой.
+	// Отменённая Встреча «не в продаже»: запись отклоняется различимой ошибкой.
 	if m.State == MeetingCancelled {
 		return nil, ErrMeetingCancelled
 	}
