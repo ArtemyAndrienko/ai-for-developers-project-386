@@ -616,6 +616,18 @@ func TestCancelBooking_IgnoredInOwnerBusy(t *testing.T) {
 	_ = kept
 }
 
+// Бронь на отменённую Встречу отклоняется различимой ошибкой
+// (handler — 422): Встреча не в продаже, но её id Посетитель знать может.
+func TestBook_CancelledMeetingRejected(t *testing.T) {
+	s := newTestStore(t)
+	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
+	s.DeleteMeeting(m.ID)
+
+	if _, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com"); !errors.Is(err, ErrMeetingCancelled) {
+		t.Errorf("бронь на отменённую Встречу: %v, хотим ErrMeetingCancelled", err)
+	}
+}
+
 // Освобождённое Отменой Встречи время не мешает Организатору: пересекающийся
 // Интервал его другой Встречи на ту же дату снова свободен (busyByOwner
 // отфильтровывает отменённые Записи).

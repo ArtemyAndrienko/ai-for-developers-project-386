@@ -103,6 +103,7 @@ var (
 	ErrBookingNotFound      = fmt.Errorf("запись не найдена")
 	ErrBookingEmailMismatch = fmt.Errorf("отменить запись может только её посетитель: email не совпадает")
 	ErrBookingPast          = fmt.Errorf("запись уже завершилась — отменить её нельзя")
+	ErrMeetingCancelled     = fmt.Errorf("встреча отменена организатором")
 )
 
 const (
@@ -457,6 +458,10 @@ func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 	m, ok := meetingByID(tx, mn)
 	if !ok {
 		return nil, ErrMeetingNotFound
+	}
+	// Отменённая Встреча «не в продаже»: бронь отклоняется различимой ошибкой.
+	if m.State == MeetingCancelled {
+		return nil, ErrMeetingCancelled
 	}
 	today := s.today()
 	if m.Date < today || m.Date > s.windowLast() {
