@@ -1,5 +1,6 @@
 # Go
 backend/bin/
+backend/backend
 
 # Node
 node_modules/
