@@ -1,9 +1,16 @@
 // Сценарий 2 (финал): все записи посетителя по email; пройдена или отменена —
 // в «Прошедшие», которые можно скрыть кнопкой «Скрыть неактуальное».
 // Предстоящую Запись посетитель может отменить (подтверждение вторым кликом).
+// Источник отмены («организатор» / «посетитель») выводится из state/meetingState.
 
 import { api } from "../api";
-import { groupBookings, HIDE_PAST_KEY, LAST_EMAIL_KEY, ruLongDate } from "../utils";
+import {
+  cancelSourceLabel,
+  groupBookings,
+  HIDE_PAST_KEY,
+  LAST_EMAIL_KEY,
+  ruLongDate,
+} from "../utils";
 import type { BookingView } from "../types";
 
 export async function renderMine(app: HTMLElement): Promise<void> {
@@ -78,11 +85,13 @@ function listHtml(bookings: BookingView[], hidePast: boolean): string {
   const { upcoming, past } = groupBookings(grouped);
   const organizer = (b: BookingView) =>
     [b.meetingOwnerName, b.meetingOwnerEmail].filter(Boolean).join(" · ");
-  const card = (b: BookingView) => `
+  const card = (b: BookingView) => {
+    const source = cancelSourceLabel(b);
+    return `
     <li class="card booking${b.past ? " off" : ""}">
       <div class="booking-head">
-        <strong>${b.meetingName || "Встреча удалена"}</strong>
-        ${b.state === "cancelled" ? `<span class="badge">Отменена</span>` : ""}
+        <strong>${b.meetingName || "Встреча"}</strong>
+        ${source ? `<span class="badge">Отменена · ${source}</span>` : ""}
         ${organizer(b) ? `<span class="organizer">Организатор: ${organizer(b)}</span>` : ""}
       </div>
       <div>${ruLongDate(b.date)} · ${b.start} - ${b.end}</div>
@@ -94,6 +103,7 @@ function listHtml(bookings: BookingView[], hidePast: boolean): string {
           : `<button class="btn danger" data-cancel="${b.id}">Отменить</button>`
       }
     </li>`;
+  };
 
   return `
     <div class="row between">

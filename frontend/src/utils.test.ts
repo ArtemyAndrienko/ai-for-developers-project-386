@@ -3,6 +3,7 @@ import type { BookingView } from "./types";
 import {
   addDays,
   buildWindow,
+  cancelSourceLabel,
   emailLike,
   groupBookings,
   hmToMin,
@@ -98,6 +99,27 @@ describe("мягкий конфликт посетителя (GLOSSARY: Конф
   it("отменённая запись не конфликтует — её Интервал свободен", () => {
     const clashes = visitorClashes([other({ state: "cancelled" })], "m-1", "2026-11-20", "10:00", "10:30");
     expect(clashes).toHaveLength(0);
+  });
+});
+
+describe("источник Отмены (GLOSSARY: Отмена Встречи)", () => {
+  const booking = (over: Record<string, unknown>) =>
+    ({ state: "active", meetingState: "active", ...over }) as BookingView;
+
+  it("активная Запись не имеет источника отмены", () => {
+    expect(cancelSourceLabel(booking({}))).toBeNull();
+  });
+
+  it("отменённая Запись активной Встречи — отменено посетителем", () => {
+    expect(cancelSourceLabel(booking({ state: "cancelled", meetingState: "active" }))).toBe(
+      "отменено посетителем",
+    );
+  });
+
+  it("Запись отменённой Встречи — отменено организатором", () => {
+    expect(cancelSourceLabel(booking({ state: "cancelled", meetingState: "cancelled" }))).toBe(
+      "отменено организатором",
+    );
   });
 });
 

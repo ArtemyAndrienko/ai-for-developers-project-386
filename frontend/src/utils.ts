@@ -78,6 +78,16 @@ export function visitorClashes(
   );
 }
 
+// Источник терминального «Отменена» выводится из состояний, отдельно не
+// хранится (GLOSSARY: «Отмена Встречи»): отменённая Встреча — отмена
+// Организатора, иначе Запись отменил Посетитель. Для активной Записи — null.
+export function cancelSourceLabel(booking: BookingView): string | null {
+  if (booking.state !== "cancelled") return null;
+  return booking.meetingState === "cancelled"
+    ? "отменено организатором"
+    : "отменено посетителем";
+}
+
 const ruDate = new Intl.DateTimeFormat("ru-RU", {
   weekday: "long",
   day: "numeric",

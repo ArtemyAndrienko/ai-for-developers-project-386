@@ -213,13 +213,15 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
         <li class="card meeting-row">
           <div><strong>${m.name}</strong> · ${ruLongDate(m.date)} · ${m.durationMin} мин
             <div class="muted">${m.description ?? ""}</div></div>
-          <button class="btn danger" data-del="${m.id}">Отменить</button>
+          <button class="btn danger" data-del="${m.id}">Отменить встречу</button>
         </li>`,
         )
         .join("")}
     </ul>`;
     list.querySelectorAll<HTMLElement>("[data-del]").forEach((btn) =>
       btn.addEventListener("click", async () => {
+        // Мягкая Отмена Встречи: сервер помечает её cancelled, и она
+        // исчезает из списка (фильтр на стороне Store).
         await api.deleteMeeting(btn.dataset.del!);
         state.meetings = await api.meetings(state.owner || undefined);
         await refreshPreview(); // занятость организатора пересчитана
