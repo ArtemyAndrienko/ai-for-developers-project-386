@@ -496,6 +496,26 @@ func TestCancelBooking_ReleasesSlot(t *testing.T) {
 	}
 }
 
+// Story 15: освобождённый отменой Интервал занимает другой Посетитель, а
+// следующий на тот же Интервал получает 409-семантику (ErrSlotTaken).
+func TestCancelBooking_RaceAfterRelease(t *testing.T) {
+	s := newTestStore(t)
+	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
+	b, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelBooking(b.ID, "ivan@example.com"); err != nil {
+		t.Fatalf("отмена собственной Записи: %v", err)
+	}
+	if _, err := s.Book(m.ID, "09:00", "Оля", "olya@example.com"); err != nil {
+		t.Fatalf("освобождённый Интервал должен сразу быть доступен другому: %v", err)
+	}
+	if _, err := s.Book(m.ID, "09:00", "Петя", "petya@example.com"); !errors.Is(err, ErrSlotTaken) {
+		t.Errorf("третий посетитель на занятый Интервал: %v, хотим ErrSlotTaken", err)
+	}
+}
+
 // Отменить Запись может только совпадающий email Посетителя (самозаявленная
 // идентичность до авторизации); колонки email — NOCASE.
 func TestCancelBooking_WrongEmailRejected(t *testing.T) {
