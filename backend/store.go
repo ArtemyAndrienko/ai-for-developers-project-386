@@ -95,6 +95,7 @@ var (
 	ErrOutsideWindow        = fmt.Errorf("дата вне окна доступности")
 	ErrBookingNotFound      = fmt.Errorf("запись не найдена")
 	ErrBookingEmailMismatch = fmt.Errorf("отменить запись может только её посетитель: email не совпадает")
+	ErrBookingPast          = fmt.Errorf("запись уже завершилась — отменить её нельзя")
 )
 
 const (
@@ -510,8 +511,8 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var state, owner string
-	err = tx.QueryRow(`SELECT state, email FROM bookings WHERE id = ?`, n).Scan(&state, &owner)
+	var state, owner, date, end string
+	err = tx.QueryRow(`SELECT state, email, date, end FROM bookings WHERE id = ?`, n).Scan(&state, &owner, &date, &end)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrBookingNotFound
@@ -525,6 +526,10 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 	// без учёта регистра (GLOSSARY: Посетитель).
 	if !strings.EqualFold(strings.TrimSpace(owner), strings.TrimSpace(email)) {
 		return ErrBookingEmailMismatch
+	}
+	// Отменить можно только предстоящую Запись (GLOSSARY: Запись).
+	if s.IsPast(&Booking{Date: date, End: end}) {
+		return ErrBookingPast
 	}
 	if _, err := tx.Exec(`UPDATE bookings SET state = 'cancelled' WHERE id = ?`, n); err != nil {
 		return err

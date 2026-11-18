@@ -391,6 +391,27 @@ func TestCancelBooking_WrongEmailRejected(t *testing.T) {
 	}
 }
 
+// Отмена доступна только для предстоящих Записей; завершившаяся — отказ.
+func TestCancelBooking_PastRejected(t *testing.T) {
+	s := newTestStore(t)
+	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
+	b, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Перематываем «сейчас» за окончание брони 09:00–09:30.
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local) }
+	if err := s.CancelBooking(b.ID, "ivan@example.com"); !errors.Is(err, ErrBookingPast) {
+		t.Errorf("завершившаяся Запись должна отклонять отмену: %v", err)
+	}
+	// Запись осталась активной.
+	bs := s.BookingsByUser("ivan@example.com")
+	if len(bs) != 1 || bs[0].State != BookingActive {
+		t.Errorf("отклонённая отмена не меняет состояние: %+v", bs)
+	}
+}
+
 // Ядро итерации (ADR-0001): данные переживают перезапуск процесса —
 // то же окно файла, новое соединение, миграции не повторяются.
 func TestPersistAcrossReopen(t *testing.T) {
