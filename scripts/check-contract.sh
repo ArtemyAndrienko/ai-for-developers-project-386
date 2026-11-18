@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Цепочка контракта: TypeSpec (typespec/main.tsp) -> OpenAPI 3 (tsp-output)
 # -> маршруты Go-сервера (backend/main.go).
-# Сверка двусторонняя, по путям (методы внутри хендлеров — separate concern):
-#  1) каждый путь OpenAPI должен попадать в какой-то mux-шаблон Go;
-#  2) каждый mux-шаблон Go должен покрываться хотя бы одним путём OpenAPI.
-# {param}-сегмента в Go ({id}, {sub}) матчат любой непустой сегмент.
+# Сверка двусторонняя, по путям И методам:
+#  1) каждая операция OpenAPI (путь + метод) должна попадать в mux-шаблон Go
+#     с тем же методом; методless-шаблон Go покрывает любой метод своего пути;
+#  2) каждый mux-шаблон Go должен описываться хотя бы одной операцией OpenAPI
+#     (шаблон с методом — операцией именно этого метода).
+# {param}-сегменты в Go ({id}, {sub}) матчат любой непустой сегмент.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,31 +21,46 @@ const fs = require("fs");
 const spec = require("./typespec/tsp-output/@typespec/openapi3/openapi.json");
 const go = fs.readFileSync("backend/main.go", "utf8");
 
-const specPaths = Object.keys(spec.paths);
-const goPaths = [
-  ...new Set(
-    [...go.matchAll(/"(?:GET |POST |PUT |DELETE )?(\/api\/[^"]*)"/g)].map((m) => m[1]),
-  ),
-];
+const HTTP_METHODS = ["get", "put", "post", "delete", "patch"];
 
 const toRegex = (tpl) =>
   new RegExp("^" + tpl.split("/").map((seg) => (seg.startsWith("{") ? "[^/]+" : seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("/") + "$");
 
-const goRegexes = goPaths.map((p) => ({ p, re: toRegex(p) }));
+// Операции OpenAPI: (метод, путь).
+const specOps = [];
+for (const [p, item] of Object.entries(spec.paths)) {
+  for (const m of Object.keys(item)) {
+    if (HTTP_METHODS.includes(m.toLowerCase())) {
+      specOps.push({ m: m.toUpperCase(), p, re: toRegex(p) });
+    }
+  }
+}
+
+// mux-шаблоны Go: метод необязателен ("" = любой метод этого пути).
+const goPatterns = [
+  ...new Set(
+    [...go.matchAll(/"(?:(GET|POST|PUT|DELETE|PATCH) )?(\/api\/[^"]*)"/g)].map((m) => (m[1] ?? "") + " " + m[2]),
+  ),
+].map((s) => {
+  const i = s.indexOf(" ");
+  return { m: s.slice(0, i), p: s.slice(i + 1), re: toRegex(s.slice(i + 1)) };
+});
+
+const label = (m, p) => (m ? m + " " : "") + p;
 
 let bad = 0;
-for (const sp of specPaths) {
-  if (!goRegexes.some((g) => g.re.test(sp))) {
-    console.error("путь OpenAPI не обслуживается Go: " + sp);
+for (const op of specOps) {
+  if (!goPatterns.some((g) => g.re.test(op.p) && (g.m === "" || g.m === op.m))) {
+    console.error("операция OpenAPI не обслуживается Go: " + label(op.m, op.p));
     bad++;
   }
 }
-for (const g of goRegexes) {
-  if (!specPaths.some((sp) => g.re.test(sp))) {
-    console.error("mux-шаблон Go не описан в OpenAPI: " + g.p);
+for (const g of goPatterns) {
+  if (!specOps.some((op) => g.re.test(op.p) && (g.m === "" || g.m === op.m))) {
+    console.error("mux-шаблон Go не описан в OpenAPI: " + label(g.m, g.p));
     bad++;
   }
 }
 if (bad) process.exit(1);
-console.log(`Контракт OK: ${specPaths.length} путей OpenAPI покрыты ${goPaths.length} mux-шаблонами Go`);
+console.log(`Контракт OK: ${specOps.length} операций OpenAPI покрыты ${goPatterns.length} mux-шаблонами Go`);
 '
