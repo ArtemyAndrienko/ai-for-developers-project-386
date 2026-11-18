@@ -56,6 +56,7 @@ type Meeting struct {
 	OwnerEmail  string    `json:"ownerEmail"`  // email организатора: по нему проверяется занятость
 	OwnerName   string    `json:"ownerName"`   // имя организатора, необязательное
 	Date        string    `json:"date"`        // "2006-01-02"
+	State       string    `json:"state"`       // "active" | "cancelled"
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
@@ -76,6 +77,12 @@ type Booking struct {
 const (
 	BookingActive    = "active"
 	BookingCancelled = "cancelled"
+)
+
+// Состояния Встречи; cancelled — терминальный (Отмена Встречи Организатором).
+const (
+	MeetingActive    = "active"
+	MeetingCancelled = "cancelled"
 )
 
 type DayAvailability struct {
@@ -99,7 +106,7 @@ var (
 )
 
 const (
-	meetingCols = `id, name, description, duration_min, owner_email, owner_name, date, created_at`
+	meetingCols = `id, name, description, duration_min, owner_email, owner_name, date, state, created_at`
 	bookingCols = `id, meeting_id, date, start, end, name, email, state, created_at`
 )
 
@@ -221,14 +228,15 @@ func meetingFrom(row rowScanner) (*Meeting, bool) {
 		dur        int
 		oe, on     string
 		date       string
+		state      string
 		created    string
 	)
-	if err := row.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &created); err != nil {
+	if err := row.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &state, &created); err != nil {
 		return nil, false
 	}
 	t, _ := time.Parse(time.RFC3339Nano, created)
 	return &Meeting{ID: pubID("m", id), Name: name, Description: desc, DurationMin: dur,
-		OwnerEmail: oe, OwnerName: on, Date: date, CreatedAt: t}, true
+		OwnerEmail: oe, OwnerName: on, Date: date, State: state, CreatedAt: t}, true
 }
 
 func meetingByID(e execer, n int64) (*Meeting, bool) {
@@ -259,7 +267,7 @@ func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEm
 	id, _ := res.LastInsertId()
 	t, _ := time.Parse(time.RFC3339Nano, createdAt)
 	return &Meeting{ID: pubID("m", id), Name: name, Description: description, DurationMin: durationMin,
-		OwnerEmail: ownerEmail, OwnerName: ownerName, Date: date, CreatedAt: t}, nil
+		OwnerEmail: ownerEmail, OwnerName: ownerName, Date: date, State: MeetingActive, CreatedAt: t}, nil
 }
 
 // Meetings возвращает все Встречи (для посетителя) или Встречи одного
@@ -286,14 +294,15 @@ func (s *Store) Meetings(owner string) []*Meeting {
 			dur        int
 			oe, on     string
 			date       string
+			state      string
 			created    string
 		)
-		if err := rows.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &created); err != nil {
+		if err := rows.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &state, &created); err != nil {
 			return out
 		}
 		t, _ := time.Parse(time.RFC3339Nano, created)
 		out = append(out, &Meeting{ID: pubID("m", id), Name: name, Description: desc, DurationMin: dur,
-			OwnerEmail: oe, OwnerName: on, Date: date, CreatedAt: t})
+			OwnerEmail: oe, OwnerName: on, Date: date, State: state, CreatedAt: t})
 	}
 	return out
 }
@@ -306,15 +315,29 @@ func (s *Store) Meeting(id string) (*Meeting, bool) {
 	return meetingByID(s.db, n)
 }
 
-// DeleteMeeting — Отмена Встречи. Её Записи удаляются (ON DELETE CASCADE):
-// отменённая Встреча исчезает из списков посетителя. План — статус
-// «Отменена» вместо стирания (README, «Дальнейшее развитие»).
+// DeleteMeeting — Отмена Встречи (GLOSSARY: «Отмена Встречи»), мягкая:
+// Встреча не стирается, а переходит в 'cancelled', и в той же транзакции
+// её активные Записи становятся «Отменена» — Посетитель видит отмену в
+// истории. Повторная отмена идемпотентна: no-op без ошибки (handler
+// отвечает тот же 204). ON DELETE CASCADE в схеме остаётся непричастным:
+// физически встречи больше не удаляются.
 func (s *Store) DeleteMeeting(id string) {
 	n, ok := parsePublicID("m", id)
 	if !ok {
 		return
 	}
-	_, _ = s.db.Exec(`DELETE FROM meetings WHERE id = ?`, n)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE meetings SET state = 'cancelled' WHERE id = ?`, n); err != nil {
+		return
+	}
+	if _, err := tx.Exec(`UPDATE bookings SET state = 'cancelled' WHERE meeting_id = ? AND state = 'active'`, n); err != nil {
+		return
+	}
+	_ = tx.Commit()
 }
 
 // --- Занятость организатора ---

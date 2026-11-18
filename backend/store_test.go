@@ -262,8 +262,9 @@ func TestPreviewAndDeleteMeeting(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.DeleteMeeting(m.ID)
-	if bs := s.BookingsByUser("ivan@example.com"); len(bs) != 0 {
-		t.Errorf("после отмены встречи записей быть не должно: %d", len(bs))
+	// Мягкая Отмена Встречи: Записи не стираются, а переходят в «Отменена».
+	if bs := s.BookingsByUser("ivan@example.com"); len(bs) != 1 || bs[0].State != BookingCancelled {
+		t.Errorf("после Отмены Встречи её Записи должны стать «Отменена»: %+v", bs)
 	}
 }
 
@@ -349,8 +350,58 @@ func TestCancelBooking_PersistsAcrossReopen(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 2 {
+	if migrations != 3 {
 		t.Errorf("миграции должны примениться по одному разу, посчитано %d", migrations)
+	}
+}
+
+// Отмена Встречи Организатором (GLOSSARY: «Отмена Встречи») — мягкая:
+// Встреча переживает отмену со статусом cancelled, её активные Записи
+// переходят в «Отменена» в одной транзакции и остаются в истории Посетителя.
+func TestCancelMeeting_MarksBookingsCancelled(t *testing.T) {
+	s := newTestStore(t)
+	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
+	b1, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Book(m.ID, "10:00", "Оля", "olya@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.DeleteMeeting(m.ID)
+
+	mm, ok := s.Meeting(m.ID)
+	if !ok || mm.State != MeetingCancelled {
+		t.Errorf("Встреча должна пережить Отмену со статусом cancelled: %+v ok=%v", mm, ok)
+	}
+	bs := s.BookingsByUser("ivan@example.com")
+	if len(bs) != 1 || bs[0].ID != b1.ID || bs[0].State != BookingCancelled {
+		t.Errorf("Запись должна остаться в истории отменённой: %+v", bs)
+	}
+	if os := s.BookingsByUser("olya@example.com"); len(os) != 1 || os[0].State != BookingCancelled {
+		t.Errorf("все активные Записи Встречи должны стать «Отменена»: %+v", os)
+	}
+}
+
+// Повторная Отмена Встречи идемпотентна: ничего не меняется, ошибок нет
+// (handler отвечает тем же 204).
+func TestCancelMeeting_Idempotent(t *testing.T) {
+	s := newTestStore(t)
+	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
+	if _, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.DeleteMeeting(m.ID)
+	s.DeleteMeeting(m.ID) // второй раз — no-op
+
+	if mm, ok := s.Meeting(m.ID); !ok || mm.State != MeetingCancelled {
+		t.Errorf("повторная Отмена не должна менять Встречу: %+v ok=%v", mm, ok)
+	}
+	bs := s.BookingsByUser("ivan@example.com")
+	if len(bs) != 1 || bs[0].State != BookingCancelled {
+		t.Errorf("повторная Отмена не должна менять Записи: %+v", bs)
 	}
 }
 
@@ -590,7 +641,7 @@ func TestPersistAcrossReopen(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 2 {
+	if migrations != 3 {
 		t.Errorf("миграция должна примениться один раз, посчитано %d", migrations)
 	}
 }
