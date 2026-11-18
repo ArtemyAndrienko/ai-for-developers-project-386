@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/bookings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Отмена Записи Посетителем: только совпадающий email и предстоящая запись; повторная отмена — успешный no-op. 404 — нет такой записи, 409 — email не совпадает, 422 — запись уже завершилась. */
+        delete: operations["BookingsApi_cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/meetings": {
         parameters: {
             query?: never;
@@ -182,9 +199,15 @@ export interface components {
             end: string;
             name: string;
             email: string;
+            state: components["schemas"]["BookingState"];
             /** Format: date-time */
             createdAt: string;
         };
+        /**
+         * @description Состояние Записи: cancelled — терминальное (Отмена Записи Посетителем)
+         * @enum {string}
+         */
+        BookingState: "active" | "cancelled";
         /** @description Запись для вкладки «Мои записи»: встреча, организатор (имя и/или email), статус */
         BookingView: {
             meetingName: string;
@@ -291,6 +314,55 @@ export interface operations {
             };
             /** @description The server could not understand the request due to invalid syntax. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    BookingsApi_cancel: {
+        parameters: {
+            query: {
+                email: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description There is no content to send for this request, but the headers may be useful. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The server cannot find the requested resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The request conflicts with the current state of the server. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Client error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

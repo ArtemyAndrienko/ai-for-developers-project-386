@@ -212,6 +212,22 @@ func (srv *server) handleBookings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, views)
 }
 
+// /api/bookings/{id}?email=... — DELETE: Отмена Записи Посетителем.
+// 204 — отменена (или уже отменена: идемпотентность), 404 — нет такой,
+// 409 — email не совпадает, 422 — запись уже завершилась.
+func (srv *server) handleCancelBooking(w http.ResponseWriter, r *http.Request) {
+	switch err := srv.store.CancelBooking(r.PathValue("id"), r.URL.Query().Get("email")); {
+	case errors.Is(err, ErrBookingNotFound):
+		writeErr(w, http.StatusNotFound, err)
+	case errors.Is(err, ErrBookingEmailMismatch):
+		writeErr(w, http.StatusConflict, err)
+	case err != nil:
+		writeErr(w, http.StatusUnprocessableEntity, err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func main() {
 	addr := os.Getenv("ADDR")
 	if addr == "" {
@@ -243,6 +259,7 @@ func main() {
 	mux.HandleFunc("/api/meetings/{id}/{sub}", srv.handleMeeting)
 	mux.HandleFunc("/api/preview/{sub}", srv.handlePreview)
 	mux.HandleFunc("/api/bookings", srv.handleBookings)
+	mux.HandleFunc("DELETE /api/bookings/{id}", srv.handleCancelBooking)
 
 	log.Printf("calendar api on http://localhost%s (db: %s)", addr, dbPath)
 	log.Fatal(http.ListenAndServe(addr, mux))

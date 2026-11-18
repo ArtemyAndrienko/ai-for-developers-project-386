@@ -97,6 +97,15 @@ model DayAvailability {
   free: int32;
 }
 
+@doc("Состояние Записи: cancelled — терминальное (Отмена Записи Посетителем)")
+enum BookingState {
+  @doc("Запись активна: Интервал занят")
+  active,
+
+  @doc("Запись отменена: Интервал свободен")
+  cancelled,
+}
+
 @doc("Бронь посетителем интервала встречи")
 model Booking {
   @key id: string;
@@ -106,6 +115,7 @@ model Booking {
   end: plainTime;
   name: string;
   email: string;
+  state: BookingState;
   createdAt: utcDateTime;
 }
 
@@ -220,4 +230,15 @@ interface BookingsApi {
   @get
   @doc("Все записи пользователя по email; прошедшие помечены past=true")
   list(@query email: string): BookingView[] | ApiError<400>;
+
+  @route("/{id}")
+  @delete
+  @doc("Отмена Записи Посетителем: только совпадающий email и предстоящая запись; повторная отмена — успешный no-op. 404 — нет такой записи, 409 — email не совпадает, 422 — запись уже завершилась.")
+  cancel(@path id: string, @query email: string):
+    | {
+        @statusCode code: 204;
+      }
+    | ApiError<404>
+    | ApiError<409>
+    | ApiError<422>;
 }

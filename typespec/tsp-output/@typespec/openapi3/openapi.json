@@ -49,6 +49,66 @@
         }
       }
     },
+    "/api/bookings/{id}": {
+      "delete": {
+        "operationId": "BookingsApi_cancel",
+        "description": "Отмена Записи Посетителем: только совпадающий email и предстоящая запись; повторная отмена — успешный no-op. 404 — нет такой записи, 409 — email не совпадает, 422 — запись уже завершилась.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "explode": false
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "There is no content to send for this request, but the headers may be useful. "
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the server.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/meetings": {
       "get": {
         "operationId": "MeetingsApi_list",
@@ -552,6 +612,7 @@
           "end",
           "name",
           "email",
+          "state",
           "createdAt"
         ],
         "properties": {
@@ -579,12 +640,23 @@
           "email": {
             "type": "string"
           },
+          "state": {
+            "$ref": "#/components/schemas/BookingState"
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
           }
         },
         "description": "Бронь посетителем интервала встречи"
+      },
+      "BookingState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "cancelled"
+        ],
+        "description": "Состояние Записи: cancelled — терминальное (Отмена Записи Посетителем)"
       },
       "BookingView": {
         "type": "object",
