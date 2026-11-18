@@ -116,17 +116,22 @@ func (srv *server) handleMeetings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// /api/meetings/{id} — DELETE; /api/meetings/{id}/... — остальное.
+// /api/meetings/{id} — DELETE (Отмена Встречи); /api/meetings/{id}/... — остальное.
 func (srv *server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sub := r.PathValue("sub")
 	if sub == "" {
-		if r.Method == http.MethodDelete {
-			srv.store.DeleteMeeting(id)
-			w.WriteHeader(http.StatusNoContent)
+		// DELETE /api/meetings/{id} — Отмена Встречи. Зарегистрирован только
+		// шаблон с методом — прочие методы отсекает сам mux (405).
+		if err := srv.store.DeleteMeeting(id); err != nil {
+			if errors.Is(err, ErrMeetingNotFound) {
+				writeErr(w, http.StatusNotFound, err)
+				return
+			}
+			writeErrInternal(w, err)
 			return
 		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -267,7 +272,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/workhours", srv.handleWorkhours)
 	mux.HandleFunc("/api/meetings", srv.handleMeetings)
-	mux.HandleFunc("/api/meetings/{id}", srv.handleMeeting)
+	mux.HandleFunc("DELETE /api/meetings/{id}", srv.handleMeeting)
 	mux.HandleFunc("/api/meetings/{id}/{sub}", srv.handleMeeting)
 	mux.HandleFunc("/api/preview/{sub}", srv.handlePreview)
 	mux.HandleFunc("/api/bookings", srv.handleBookings)

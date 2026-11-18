@@ -26,6 +26,13 @@ func mustMeeting(t *testing.T, s *Store, name string, dur int, owner, date strin
 	return m
 }
 
+func mustCancelMeeting(t *testing.T, s *Store, id string) {
+	t.Helper()
+	if err := s.DeleteMeeting(id); err != nil {
+		t.Fatalf("DeleteMeeting(%s): %v", id, err)
+	}
+}
+
 func freeStarts(t *testing.T, s *Store, meetingID string) map[string]SlotStatus {
 	t.Helper()
 	slots, ok := s.DaySlots(meetingID)
@@ -261,7 +268,7 @@ func TestPreviewAndDeleteMeeting(t *testing.T) {
 	if _, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	s.DeleteMeeting(m.ID)
+	mustCancelMeeting(t, s, m.ID)
 	// Мягкая Отмена Встречи: Записи не стираются, а переходят в «Отменена».
 	if bs := s.BookingsByUser("ivan@example.com"); len(bs) != 1 || bs[0].State != BookingCancelled {
 		t.Errorf("после Отмены Встречи её Записи должны стать «Отменена»: %+v", bs)
@@ -369,7 +376,7 @@ func TestCancelMeeting_MarksBookingsCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.DeleteMeeting(m.ID)
+	mustCancelMeeting(t, s, m.ID)
 
 	mm, ok := s.Meeting(m.ID)
 	if !ok || mm.State != MeetingCancelled {
@@ -391,7 +398,7 @@ func TestCancelMeeting_HiddenFromLists(t *testing.T) {
 	s := newTestStore(t)
 	mustMeeting(t, s, "Чужая", 30, "other@x.io", "2026-11-18")
 	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
-	s.DeleteMeeting(m.ID)
+	mustCancelMeeting(t, s, m.ID)
 
 	if all := s.Meetings(""); len(all) != 1 || all[0].OwnerEmail != "other@x.io" {
 		t.Errorf("отменённая Встреча не должна быть в публичном списке: %+v", all)
@@ -416,8 +423,13 @@ func TestCancelMeeting_Idempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.DeleteMeeting(m.ID)
-	s.DeleteMeeting(m.ID) // второй раз — no-op
+	mustCancelMeeting(t, s, m.ID)
+	// Второй раз — успешный no-op без ошибки (handler отвечает тот же 204).
+	mustCancelMeeting(t, s, m.ID)
+	// Несуществующая Встреча — различимая ошибка (handler — 404).
+	if err := s.DeleteMeeting("m-nope"); !errors.Is(err, ErrMeetingNotFound) {
+		t.Errorf("отмена несуществующей Встречи: %v, хотим ErrMeetingNotFound", err)
+	}
 
 	if mm, ok := s.Meeting(m.ID); !ok || mm.State != MeetingCancelled {
 		t.Errorf("повторная Отмена не должна менять Встречу: %+v ok=%v", mm, ok)
@@ -641,7 +653,7 @@ func TestCancelBooking_IgnoredInOwnerBusy(t *testing.T) {
 func TestBook_CancelledMeetingRejected(t *testing.T) {
 	s := newTestStore(t)
 	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
-	s.DeleteMeeting(m.ID)
+	mustCancelMeeting(t, s, m.ID)
 
 	if _, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com"); !errors.Is(err, ErrMeetingCancelled) {
 		t.Errorf("запись на отменённую Встречу: %v, хотим ErrMeetingCancelled", err)
@@ -662,7 +674,7 @@ func TestCancelMeeting_FreesOwnerTime(t *testing.T) {
 		t.Fatalf("до Отмены 10:00–11:00 занят пересечением с 10:30–11:00: %v", err)
 	}
 
-	s.DeleteMeeting(m30.ID)
+	mustCancelMeeting(t, s, m30.ID)
 
 	if _, err := s.Book(m60.ID, "10:00", "Оля", "olya@example.com"); err != nil {
 		t.Errorf("после Отмены Встречи Интервал свободен в другой её встрече того же организатора: %v", err)
@@ -689,7 +701,7 @@ func TestCancelMeeting_PersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.DeleteMeeting(m.ID)
+	mustCancelMeeting(t, s, m.ID)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}

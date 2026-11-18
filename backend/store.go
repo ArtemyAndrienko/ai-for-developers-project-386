@@ -317,28 +317,43 @@ func (s *Store) Meeting(id string) (*Meeting, bool) {
 }
 
 // DeleteMeeting — Отмена Встречи (GLOSSARY: «Отмена Встречи»), мягкая:
-// Встреча не стирается, а переходит в 'cancelled', и в той же транзакции
+// Встреча не стирается, а переходит в MeetingCancelled, и в той же транзакции
 // её активные Записи становятся «Отменена» — Посетитель видит отмену в
-// истории. Повторная отмена идемпотентна: no-op без ошибки (handler
-// отвечает тот же 204). ON DELETE CASCADE в схеме остаётся непричастным:
+// истории. Несуществующая (или некорректная) Встреча — ErrMeetingNotFound
+// (handler — 404); повторная отмена уже отменённой — успешный no-op
+// (handler — тот же 204). ON DELETE CASCADE в схеме остаётся непричастным:
 // физически встречи больше не удаляются.
-func (s *Store) DeleteMeeting(id string) {
+func (s *Store) DeleteMeeting(id string) error {
 	n, ok := parsePublicID("m", id)
 	if !ok {
-		return
+		return ErrMeetingNotFound
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return
+		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`UPDATE meetings SET state = 'cancelled' WHERE id = ?`, n); err != nil {
-		return
+
+	// Существование проверяем в той же транзакции, что и переход в cancelled.
+	var state string
+	err = tx.QueryRow(`SELECT state FROM meetings WHERE id = ?`, n).Scan(&state)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrMeetingNotFound
+		}
+		return err
 	}
-	if _, err := tx.Exec(`UPDATE bookings SET state = 'cancelled' WHERE meeting_id = ? AND state = 'active'`, n); err != nil {
-		return
+	if state == MeetingCancelled {
+		return nil // повторная отмена идемпотентна
 	}
-	_ = tx.Commit()
+	if _, err := tx.Exec(`UPDATE meetings SET state = ? WHERE id = ?`, MeetingCancelled, n); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE bookings SET state = ? WHERE meeting_id = ? AND state = ?`,
+		BookingCancelled, n, BookingActive); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // --- Занятость организатора ---
