@@ -364,6 +364,33 @@ func TestCancelBooking_ReleasesSlot(t *testing.T) {
 	}
 }
 
+// Отменить Запись может только совпадающий email Посетителя (самозаявленная
+// идентичность до авторизации); колонки email — NOCASE.
+func TestCancelBooking_WrongEmailRejected(t *testing.T) {
+	s := newTestStore(t)
+	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
+	b, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.CancelBooking(b.ID, "someone@else.io"); !errors.Is(err, ErrBookingEmailMismatch) {
+		t.Errorf("чужой email должен отклоняться: %v", err)
+	}
+	if err := s.CancelBooking("b-999", "ivan@example.com"); !errors.Is(err, ErrBookingNotFound) {
+		t.Errorf("несуществующая запись: %v", err)
+	}
+	// Регистр email не значим.
+	if err := s.CancelBooking(b.ID, "IVAN@EXAMPLE.COM"); err != nil {
+		t.Errorf("совпадение email без учёта регистра: %v", err)
+	}
+	// Отклонённая отмена не освободила Интервал — уже проверено выше: слот
+	// занят до успешной отмены, а после неё свободен.
+	if _, err := s.Book(m.ID, "09:00", "Оля", "olya@example.com"); err != nil {
+		t.Errorf("после успешной отмены Интервал свободен: %v", err)
+	}
+}
+
 // Ядро итерации (ADR-0001): данные переживают перезапуск процесса —
 // то же окно файла, новое соединение, миграции не повторяются.
 func TestPersistAcrossReopen(t *testing.T) {

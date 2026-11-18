@@ -85,15 +85,16 @@ type DayAvailability struct {
 
 // Ошибки различимы на уровне HTTP-кодов.
 var (
-	ErrMeetingNotFound = fmt.Errorf("встреча не найдена")
-	ErrSlotUnavailable = fmt.Errorf("интервал недоступен (серый или прошедший)")
-	ErrSlotTaken       = fmt.Errorf("интервал занят в этой или другой встрече организатора")
-	ErrNameRequired    = fmt.Errorf("укажите имя")
-	ErrEmailRequired   = fmt.Errorf("укажите email")
-	ErrOwnerRequired   = fmt.Errorf("укажите email организатора")
-	ErrDateRequired    = fmt.Errorf("дата встречи обязательна и должна быть в окне доступности")
-	ErrOutsideWindow   = fmt.Errorf("дата вне окна доступности")
-	ErrBookingNotFound = fmt.Errorf("запись не найдена")
+	ErrMeetingNotFound      = fmt.Errorf("встреча не найдена")
+	ErrSlotUnavailable      = fmt.Errorf("интервал недоступен (серый или прошедший)")
+	ErrSlotTaken            = fmt.Errorf("интервал занят в этой или другой встрече организатора")
+	ErrNameRequired         = fmt.Errorf("укажите имя")
+	ErrEmailRequired        = fmt.Errorf("укажите email")
+	ErrOwnerRequired        = fmt.Errorf("укажите email организатора")
+	ErrDateRequired         = fmt.Errorf("дата встречи обязательна и должна быть в окне доступности")
+	ErrOutsideWindow        = fmt.Errorf("дата вне окна доступности")
+	ErrBookingNotFound      = fmt.Errorf("запись не найдена")
+	ErrBookingEmailMismatch = fmt.Errorf("отменить запись может только её посетитель: email не совпадает")
 )
 
 const (
@@ -509,8 +510,9 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var state string
-	if err := tx.QueryRow(`SELECT state FROM bookings WHERE id = ?`, n).Scan(&state); err != nil {
+	var state, owner string
+	err = tx.QueryRow(`SELECT state, email FROM bookings WHERE id = ?`, n).Scan(&state, &owner)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrBookingNotFound
 		}
@@ -518,6 +520,11 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 	}
 	if state == BookingCancelled {
 		return nil
+	}
+	// Колонка email — COLLATE NOCASE; сверка самозаявленной идентичности
+	// без учёта регистра (GLOSSARY: Посетитель).
+	if !strings.EqualFold(strings.TrimSpace(owner), strings.TrimSpace(email)) {
+		return ErrBookingEmailMismatch
 	}
 	if _, err := tx.Exec(`UPDATE bookings SET state = 'cancelled' WHERE id = ?`, n); err != nil {
 		return err
