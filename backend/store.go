@@ -275,8 +275,8 @@ func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEm
 // организатора, если owner непустой; отменённые исключены и там, и там.
 // Колонки email — COLLATE NOCASE, регистр не значим.
 func (s *Store) Meetings(owner string) []*Meeting {
-	q := `SELECT ` + meetingCols + ` FROM meetings WHERE state = 'active'`
-	var args []any
+	q := `SELECT ` + meetingCols + ` FROM meetings WHERE state = ?`
+	args := []any{MeetingActive}
 	if owner != "" {
 		q += ` AND owner_email = ?`
 		args = append(args, owner)
@@ -289,21 +289,12 @@ func (s *Store) Meetings(owner string) []*Meeting {
 	defer rows.Close()
 	out := []*Meeting{}
 	for rows.Next() {
-		var (
-			id         int64
-			name, desc string
-			dur        int
-			oe, on     string
-			date       string
-			state      string
-			created    string
-		)
-		if err := rows.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &state, &created); err != nil {
+		// Единый разбор колонок — тот же row-хелпер, что и для одной Встречи.
+		m, ok := meetingFrom(rows)
+		if !ok {
 			return out
 		}
-		t, _ := time.Parse(time.RFC3339Nano, created)
-		out = append(out, &Meeting{ID: pubID("m", id), Name: name, Description: desc, DurationMin: dur,
-			OwnerEmail: oe, OwnerName: on, Date: date, State: state, CreatedAt: t})
+		out = append(out, m)
 	}
 	return out
 }
@@ -367,8 +358,8 @@ func busyByOwner(e execer, ownerEmail, dateFrom, dateTo string) map[string][]Int
 	rows, err := e.Query(`SELECT b.date, b.start, b.end FROM bookings b
 		JOIN meetings m ON m.id = b.meeting_id
 		WHERE m.owner_email = ? AND b.date >= ? AND b.date <= ?
-		AND b.state = 'active'`,
-		ownerEmail, dateFrom, dateTo)
+		AND b.state = ?`,
+		ownerEmail, dateFrom, dateTo, BookingActive)
 	if err != nil {
 		return out
 	}
@@ -576,7 +567,7 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 	if s.IsPast(&Booking{Date: date, End: end}) {
 		return ErrBookingPast
 	}
-	if _, err := tx.Exec(`UPDATE bookings SET state = 'cancelled' WHERE id = ?`, n); err != nil {
+	if _, err := tx.Exec(`UPDATE bookings SET state = ? WHERE id = ?`, BookingCancelled, n); err != nil {
 		return err
 	}
 	return tx.Commit()
