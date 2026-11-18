@@ -131,4 +131,13 @@ export const api = {
     ensureOk(res);
     return data as BookingView[];
   },
+
+  // Отмена Записи Посетителем; совпадение email проверяет сервер
+  // (409 — не совпал, 422 — запись уже завершилась).
+  cancelBooking: async (id: string, email: string): Promise<void> => {
+    const res = await client.DELETE("/api/bookings/{id}", {
+      params: { path: { id }, query: { email } },
+    });
+    ensureOk(res);
+  },
 };
