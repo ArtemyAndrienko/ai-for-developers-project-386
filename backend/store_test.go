@@ -384,6 +384,29 @@ func TestCancelMeeting_MarksBookingsCancelled(t *testing.T) {
 	}
 }
 
+// Отменённая Встреча исчезает из публичного списка, из «ваших встреч»
+// организатора и из продажи: её сетка и доступность больше не отдаются
+// (handler отвечает 404 — «нет в продаже», данные нужны только истории).
+func TestCancelMeeting_HiddenFromLists(t *testing.T) {
+	s := newTestStore(t)
+	mustMeeting(t, s, "Чужая", 30, "other@x.io", "2026-11-18")
+	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
+	s.DeleteMeeting(m.ID)
+
+	if all := s.Meetings(""); len(all) != 1 || all[0].OwnerEmail != "other@x.io" {
+		t.Errorf("отменённая Встреча не должна быть в публичном списке: %+v", all)
+	}
+	if own := s.Meetings("boss@x.io"); len(own) != 0 {
+		t.Errorf("отменённая Встреча не должна быть в списке организатора: %+v", own)
+	}
+	if slots, ok := s.DaySlots(m.ID); ok {
+		t.Errorf("сетка отменённой Встречи недоступна (404), получили %v", slots)
+	}
+	if av, ok := s.MeetingAvailability(m.ID); ok {
+		t.Errorf("доступность отменённой Встречи недоступна (404), получили %+v", av)
+	}
+}
+
 // Повторная Отмена Встречи идемпотентна: ничего не меняется, ошибок нет
 // (handler отвечает тем же 204).
 func TestCancelMeeting_Idempotent(t *testing.T) {

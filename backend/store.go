@@ -270,14 +270,14 @@ func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEm
 		OwnerEmail: ownerEmail, OwnerName: ownerName, Date: date, State: MeetingActive, CreatedAt: t}, nil
 }
 
-// Meetings возвращает все Встречи (для посетителя) или Встречи одного
-// организатора, если owner непустой. Колонки email — COLLATE NOCASE,
-// регистр не значим.
+// Meetings возвращает доступные Встречи — все (для посетителя) или одного
+// организатора, если owner непустой; отменённые исключены и там, и там.
+// Колонки email — COLLATE NOCASE, регистр не значим.
 func (s *Store) Meetings(owner string) []*Meeting {
-	q := `SELECT ` + meetingCols + ` FROM meetings`
+	q := `SELECT ` + meetingCols + ` FROM meetings WHERE state = 'active'`
 	var args []any
 	if owner != "" {
-		q += ` WHERE owner_email = ?`
+		q += ` AND owner_email = ?`
 		args = append(args, owner)
 	}
 	q += ` ORDER BY date, created_at, id`
@@ -375,9 +375,10 @@ func busyByOwner(e execer, ownerEmail, dateFrom, dateTo string) map[string][]Int
 
 // DaySlots — сетка Интервалов Встречи на её день: границы рабочего дня для
 // (организатор, дата), сквозная занятость по всем Встречам организатора.
+// Отменённая Встреча «не в продаже»: сетка недоступна (handler — 404).
 func (s *Store) DaySlots(meetingID string) ([]Slot, bool) {
 	m, ok := s.Meeting(meetingID)
-	if !ok {
+	if !ok || m.State != MeetingActive {
 		return nil, false
 	}
 	h := s.WorkHours(m.OwnerEmail, m.Date)
