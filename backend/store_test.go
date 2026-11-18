@@ -616,6 +616,30 @@ func TestCancelBooking_IgnoredInOwnerBusy(t *testing.T) {
 	_ = kept
 }
 
+// Освобождённое Отменой Встречи время не мешает Организатору: пересекающийся
+// Интервал его другой Встречи на ту же дату снова свободен (busyByOwner
+// отфильтровывает отменённые Записи).
+func TestCancelMeeting_FreesOwnerTime(t *testing.T) {
+	s := newTestStore(t)
+	m30 := mustMeeting(t, s, "Короткий колл", 30, "boss@x.io", "2026-11-17")
+	m60 := mustMeeting(t, s, "Часовой разбор", 60, "boss@x.io", "2026-11-17")
+	if _, err := s.Book(m30.ID, "10:30", "Иван", "ivan@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Book(m60.ID, "10:00", "Оля", "olya@example.com"); !errors.Is(err, ErrSlotTaken) {
+		t.Fatalf("до Отмены 10:00–11:00 занят пересечением с 10:30–11:00: %v", err)
+	}
+
+	s.DeleteMeeting(m30.ID)
+
+	if _, err := s.Book(m60.ID, "10:00", "Оля", "olya@example.com"); err != nil {
+		t.Errorf("после Отмены Встречи Интервал свободен в другой её встрече того же организатора: %v", err)
+	}
+	if statuses := freeStarts(t, s, m60.ID); statuses["10:00"] != SlotTaken {
+		t.Errorf("свежая бронь 10:00 в 60-мин сетке должна быть занята: %s", statuses["10:00"])
+	}
+}
+
 // Ядро итерации (ADR-0001): данные переживают перезапуск процесса —
 // то же окно файла, новое соединение, миграции не повторяются.
 func TestPersistAcrossReopen(t *testing.T) {
