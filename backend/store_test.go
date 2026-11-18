@@ -412,6 +412,78 @@ func TestCancelBooking_PastRejected(t *testing.T) {
 	}
 }
 
+// Повторная отмена той же Записи — успешный no-op (идемпотентность).
+func TestCancelBooking_Idempotent(t *testing.T) {
+	s := newTestStore(t)
+	m := mustMeeting(t, s, "Звонок", 30, "boss@x.io", "2026-11-17")
+	b, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.CancelBooking(b.ID, "ivan@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	// Вторая и третья отмена ничего не меняют и не ошибаются; в том числе
+	// после перематывания «сейчас» за окончание — cancelled остаётся no-op.
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local) }
+	for i := 0; i < 2; i++ {
+		if err := s.CancelBooking(b.ID, "ivan@example.com"); err != nil {
+			t.Errorf("повторная отмена #%d: %v", i+1, err)
+		}
+	}
+	bs := s.BookingsByUser("ivan@example.com")
+	if len(bs) != 1 || bs[0].State != BookingCancelled {
+		t.Errorf("состояние после повторных отмен: %+v", bs)
+	}
+	// Чужой email для уже отменённой Записи по-прежнему отклоняется.
+	if err := s.CancelBooking(b.ID, "someone@else.io"); !errors.Is(err, ErrBookingEmailMismatch) {
+		t.Errorf("чужой email на отменённой записи: %v", err)
+	}
+}
+
+// Отменённая Запись не занимает время Организатора сквозняком: в его других
+// Встречах на ту же дату пересекающиеся Интервалы снова свободны, а активные
+// брони остаются занятыми.
+func TestCancelBooking_IgnoredInOwnerBusy(t *testing.T) {
+	s := newTestStore(t)
+	m30 := mustMeeting(t, s, "Короткий колл", 30, "boss@x.io", "2026-11-17")
+	m60 := mustMeeting(t, s, "Часовой разбор", 60, "boss@x.io", "2026-11-17")
+
+	cancelled, err := s.Book(m30.ID, "10:30", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := s.Book(m30.ID, "14:00", "Оля", "olya@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelBooking(cancelled.ID, "ivan@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	statuses := freeStarts(t, s, m60.ID)
+	if statuses["10:00"] != SlotFree {
+		t.Errorf("после отмены интервал 10:00 в другой встрече организатора свободен: %s", statuses["10:00"])
+	}
+	// Активная запись того же посетителя в сетке 30-минутной встречи —
+	// на 14:00 не влияет на 60-мин сетку; проверяем, что она сама по-прежнему занята.
+	statuses30 := freeStarts(t, s, m30.ID)
+	if statuses30["10:30"] != SlotFree {
+		t.Errorf("отменённый интервал снова свободен в исходной встрече: %s", statuses30["10:30"])
+	}
+	if statuses30["14:00"] != SlotTaken {
+		t.Errorf("активная запись остаётся занятой: %s", statuses30["14:00"])
+	}
+
+	// Отменённая Запись видна посетителю в состоянии cancelled.
+	bs := s.BookingsByUser("ivan@example.com")
+	if len(bs) != 1 || bs[0].State != BookingCancelled {
+		t.Errorf("отменённая запись в списке посетителя: %+v", bs)
+	}
+	_ = kept
+}
+
 // Ядро итерации (ADR-0001): данные переживают перезапуск процесса —
 // то же окно файла, новое соединение, миграции не повторяются.
 func TestPersistAcrossReopen(t *testing.T) {

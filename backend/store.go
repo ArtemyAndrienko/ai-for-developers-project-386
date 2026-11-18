@@ -519,13 +519,14 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 		}
 		return err
 	}
-	if state == BookingCancelled {
-		return nil
-	}
 	// Колонка email — COLLATE NOCASE; сверка самозаявленной идентичности
-	// без учёта регистра (GLOSSARY: Посетитель).
+	// без учёта регистра (GLOSSARY: Посетитель). Отклоняем и для уже
+	// отменённой Записи: отменить её мог только её посетитель.
 	if !strings.EqualFold(strings.TrimSpace(owner), strings.TrimSpace(email)) {
 		return ErrBookingEmailMismatch
+	}
+	if state == BookingCancelled {
+		return nil // повторная отмена — успешный no-op (идемпотентность)
 	}
 	// Отменить можно только предстоящую Запись (GLOSSARY: Запись).
 	if s.IsPast(&Booking{Date: date, End: end}) {
