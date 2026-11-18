@@ -652,6 +652,50 @@ func TestCancelMeeting_FreesOwnerTime(t *testing.T) {
 	}
 }
 
+// Мягкая Отмена Встречи переживает перезакрытие базы: статус Встречи и её
+// Записей читается из файла, отменённая Встреча остаётся скрытой, а её
+// освобождённое время — доступным.
+func TestCancelMeeting_PersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calendar.db")
+	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local) }
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = fixed
+	m := mustMeeting(t, s, "Не переживёт стирание", 30, "boss@x.io", "2026-11-17")
+	b, err := s.Book(m.ID, "09:00", "Иван", "ivan@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.DeleteMeeting(m.ID)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path) // fresh соединение поверх WAL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	s2.now = fixed
+
+	if ms := s2.Meetings("boss@x.io"); len(ms) != 0 {
+		t.Errorf("отменённая Встреча не должна возвращаться после рестарта: %+v", ms)
+	}
+	if mm, ok := s2.Meeting(m.ID); !ok || mm.State != MeetingCancelled {
+		t.Errorf("статус Отмены Встречи должен лежать в файле: %+v ok=%v", mm, ok)
+	}
+	bs := s2.BookingsByUser("ivan@example.com")
+	if len(bs) != 1 || bs[0].ID != b.ID || bs[0].State != BookingCancelled {
+		t.Errorf("отменённая Запись не пережила рестарт: %+v", bs)
+	}
+	if _, err := s2.Book(m.ID, "09:00", "Оля", "olya@example.com"); !errors.Is(err, ErrMeetingCancelled) {
+		t.Errorf("после рестарта бронь отменённой Встречи должна отклоняться: %v", err)
+	}
+}
+
 // Ядро итерации (ADR-0001): данные переживают перезапуск процесса —
 // то же окно файла, новое соединение, миграции не повторяются.
 func TestPersistAcrossReopen(t *testing.T) {
