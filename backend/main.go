@@ -25,6 +25,13 @@ func writeErr(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]string{"error": err.Error()})
 }
 
+// writeErrInternal — неизвестная внутренняя ошибка: в лог уходит оригинал,
+// клиенту — общий 500 без деталей.
+func writeErrInternal(w http.ResponseWriter, err error) {
+	log.Printf("internal error: %v", err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка сервера"})
+}
+
 // bookingView — запись в представлении для клиента: встреча + флаг «пройдена»
 // + данные организатора (имя и/или email для вкладки «Мои записи») + состояние
 // Встречи (источник «Отменена» выводится на клиенте, не хранится).
@@ -217,15 +224,17 @@ func (srv *server) handleBookings(w http.ResponseWriter, r *http.Request) {
 
 // /api/bookings/{id}?email=... — DELETE: Отмена Записи Посетителем.
 // 204 — отменена (или уже отменена: идемпотентность), 404 — нет такой,
-// 409 — email не совпадает, 422 — запись уже завершилась.
+// 409 — email не совпадает, 422 — запись уже завершилась, 500 — прочее.
 func (srv *server) handleCancelBooking(w http.ResponseWriter, r *http.Request) {
 	switch err := srv.store.CancelBooking(r.PathValue("id"), r.URL.Query().Get("email")); {
 	case errors.Is(err, ErrBookingNotFound):
 		writeErr(w, http.StatusNotFound, err)
 	case errors.Is(err, ErrBookingEmailMismatch):
 		writeErr(w, http.StatusConflict, err)
-	case err != nil:
+	case errors.Is(err, ErrBookingPast):
 		writeErr(w, http.StatusUnprocessableEntity, err)
+	case err != nil:
+		writeErrInternal(w, err)
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
