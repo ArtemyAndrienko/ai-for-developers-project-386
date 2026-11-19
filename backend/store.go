@@ -390,7 +390,7 @@ func (s *Store) DaySlots(meetingID string) ([]Slot, bool) {
 	}
 	h := s.WorkHours(m.OwnerEmail, m.Date)
 	busy := busyByOwner(s.db, m.OwnerEmail, m.Date, m.Date)[m.Date]
-	return GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(m.Date), busy), true
+	return GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, m.DurationMin, s.dayNowMin(m.Date), busy), true
 }
 
 // PreviewSlots — превью сетки дня для ещё не созданной Встречи (Сценарий 1:
@@ -402,7 +402,7 @@ func (s *Store) PreviewSlots(ownerEmail, date string, durationMin int) []Slot {
 	if ownerEmail != "" {
 		busy = busyByOwner(s.db, ownerEmail, date, date)[date]
 	}
-	return GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(date), busy)
+	return GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, durationMin, s.dayNowMin(date), busy)
 }
 
 // MeetingAvailability — число свободных Интервалов на день Встречи
@@ -432,7 +432,7 @@ func (s *Store) PreviewAvailability(durationMin int, ownerEmail string) []DayAva
 		if allBusy != nil {
 			busy = allBusy[date]
 		}
-		slots := GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(date), busy)
+		slots := GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, durationMin, s.dayNowMin(date), busy)
 		out = append(out, DayAvailability{Date: date, Free: FreeCount(slots)})
 	}
 	return out
@@ -476,7 +476,7 @@ func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 
 	h := workHoursVia(tx, m.OwnerEmail, m.Date)
 	busy := busyByOwner(tx, m.OwnerEmail, m.Date, m.Date)[m.Date]
-	slots := GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(m.Date), busy)
+	slots := GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, m.DurationMin, s.dayNowMin(m.Date), busy)
 	slot, allowed := SlotAllowed(slots, start)
 	if !allowed {
 		if slot.Status == SlotTaken {

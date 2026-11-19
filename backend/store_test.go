@@ -440,20 +440,26 @@ func TestCancelMeeting_Idempotent(t *testing.T) {
 	}
 }
 
-// Хвостовой остаток на день встречи нельзя забронировать.
-func TestBook_TailSlotRejected(t *testing.T) {
+// «Хвостовой интервал» упразднён и на Store-шовне: день 09:00–17:50 с
+// длительностью 45 даёт 11 целых стартов (последний 16:30–17:15), остаток
+// 17:15–17:50 в сетке отсутствует, а бронь не-старта 17:15 отклоняется как
+// интервал вне сетки.
+func TestBook_TailNeverAppears(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.SetWorkHours("boss@x.io", "2026-11-17", "09:00", "17:50"); err != nil {
 		t.Fatal(err)
 	}
 	m := mustMeeting(t, s, "Долгий созвон", 45, "boss@x.io", "2026-11-17")
 	slots, _ := s.DaySlots(m.ID)
-	tail := slots[len(slots)-1]
-	if tail.Status != SlotTail {
-		t.Fatalf("последний интервал должен быть серым: %v", tail)
+	if len(slots) != 11 {
+		t.Fatalf("ожидалось 11 целых интервалов, получено %d", len(slots))
 	}
-	if _, err := s.Book(m.ID, tail.Start, "Иван", "ivan@example.com"); !errors.Is(err, ErrSlotUnavailable) {
-		t.Errorf("бронь хвостового интервала: %v", err)
+	last := slots[len(slots)-1]
+	if last.Start != "16:30" || last.End != "17:15" || last.Status != SlotFree {
+		t.Errorf("последний интервал должен быть целым и свободным: %v", last)
+	}
+	if _, err := s.Book(m.ID, "17:15", "Иван", "ivan@example.com"); !errors.Is(err, ErrSlotUnavailable) {
+		t.Errorf("бронь не влезающего старта: %v, хотим ErrSlotUnavailable", err)
 	}
 }
 
