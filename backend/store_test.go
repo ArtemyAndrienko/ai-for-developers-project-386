@@ -11,15 +11,21 @@ func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	s := NewStore()
 	t.Cleanup(func() { _ = s.Close() })
-	// Фиксируем «сейчас»: понедельник 16.11.2026, 12:00 локального времени.
-	fixed := time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local)
+	// Фиксируем «сейчас»: понедельник 16.11.2026, 12:00 UTC. Часы тестов
+	// ставятся явно в UTC — окружение раннера не влияет на вердикты (ADR-0004).
+	fixed := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return fixed }
 	return s
 }
 
 func mustMeeting(t *testing.T, s *Store, name string, dur int, owner, date string) *Meeting {
 	t.Helper()
-	m, err := s.CreateMeeting(name, "", dur, owner, "", date)
+	return mustMeetingTZ(t, s, name, dur, owner, date, "")
+}
+
+func mustMeetingTZ(t *testing.T, s *Store, name string, dur int, owner, date, timezone string) *Meeting {
+	t.Helper()
+	m, err := s.CreateMeeting(name, "", dur, owner, "", date, timezone)
 	if err != nil {
 		t.Fatalf("CreateMeeting(%q): %v", name, err)
 	}
@@ -212,7 +218,7 @@ func TestCreateMeeting_Validation(t *testing.T) {
 		{"кривая дата", "x", "boss@x.io", 30, "17.11.2026", ErrDateRequired},
 	}
 	for _, c := range cases {
-		_, err := s.CreateMeeting(c.mname, "", c.dur, c.own, "", c.date)
+		_, err := s.CreateMeeting(c.mname, "", c.dur, c.own, "", c.date, "")
 		if err == nil {
 			t.Errorf("%s: ошибки нет", c.name)
 		}
@@ -240,7 +246,7 @@ func TestMeetingsFilterByOwner(t *testing.T) {
 // отображается посетителю в «Мои записи».
 func TestMeetingOrganizerName(t *testing.T) {
 	s := newTestStore(t)
-	m, err := s.CreateMeeting("Разбор", "", 30, "boss@x.io", "Иван Босс", "2026-11-17")
+	m, err := s.CreateMeeting("Разбор", "", 30, "boss@x.io", "Иван Босс", "2026-11-17", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +254,7 @@ func TestMeetingOrganizerName(t *testing.T) {
 		t.Errorf("имя организатора не сохранилось: %+v", m)
 	}
 	// Без имени — пустая строка допустима.
-	m2, err := s.CreateMeeting("Аноним", "", 30, "boss@x.io", "", "2026-11-18")
+	m2, err := s.CreateMeeting("Аноним", "", 30, "boss@x.io", "", "2026-11-18", "")
 	if err != nil || m2.OwnerName != "" {
 		t.Errorf("имя организатора опционально: %+v %v", m2, err)
 	}
@@ -298,7 +304,7 @@ func TestBook_Rejections(t *testing.T) {
 	// «Сейчас» переезжает за пределы окна доступности — дата существующей
 	// встречи устаревает, бронь должна отклоняться.
 	stale := mustMeeting(t, s, "Просроченная", 30, "boss@x.io", "2026-11-17")
-	s.now = func() time.Time { return time.Date(2026, 12, 20, 12, 0, 0, 0, time.Local) }
+	s.now = func() time.Time { return time.Date(2026, 12, 20, 12, 0, 0, 0, time.UTC) }
 	if _, err := s.Book(stale.ID, "09:00", "Иван", "ivan@x.io"); !errors.Is(err, ErrOutsideWindow) {
 		t.Errorf("бронь встречи вне окна: %v", err)
 	}
@@ -308,7 +314,7 @@ func TestBook_Rejections(t *testing.T) {
 // берутся из файла, миграции не повторяются.
 func TestCancelBooking_PersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "calendar.db")
-	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local) }
+	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC) }
 
 	s, err := Open(path)
 	if err != nil {
@@ -357,7 +363,7 @@ func TestCancelBooking_PersistsAcrossReopen(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 3 {
+	if migrations != 4 {
 		t.Errorf("миграции должны примениться по одному разу, посчитано %d", migrations)
 	}
 }
@@ -470,7 +476,7 @@ func TestIsPast_Grouping(t *testing.T) {
 	}
 
 	// Перематываем «сейчас» за окончание брони 09:00–09:30.
-	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local) }
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC) }
 	if !s.IsPast(future) {
 		t.Errorf("после окончания Встреча должна попасть в «Прошедшие»")
 	}
@@ -565,7 +571,7 @@ func TestCancelBooking_PastRejected(t *testing.T) {
 	}
 
 	// Перематываем «сейчас» за окончание брони 09:00–09:30.
-	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local) }
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC) }
 	if err := s.CancelBooking(b.ID, "ivan@example.com"); !errors.Is(err, ErrBookingPast) {
 		t.Errorf("завершившаяся Запись должна отклонять отмену: %v", err)
 	}
@@ -590,7 +596,7 @@ func TestCancelBooking_Idempotent(t *testing.T) {
 	}
 	// Вторая и третья отмена ничего не меняют и не ошибаются; в том числе
 	// после перематывания «сейчас» за окончание — cancelled остаётся no-op.
-	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local) }
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC) }
 	for i := 0; i < 2; i++ {
 		if err := s.CancelBooking(b.ID, "ivan@example.com"); err != nil {
 			t.Errorf("повторная отмена #%d: %v", i+1, err)
@@ -648,6 +654,147 @@ func TestCancelBooking_IgnoredInOwnerBusy(t *testing.T) {
 	_ = kept
 }
 
+// Профиль Организатора: upsert при сохранении Встречи, чтение в ответе,
+// пустая строка зоны не трогает профиль, без профиля — UTC (дефолт
+// детерминированный, не локаль процесса). Некорректная IANA-зона отклоняется.
+func TestOrganizerTimezone_ProfileUpsertAndRead(t *testing.T) {
+	s := newTestStore(t)
+
+	// Профиль создаётся вместе с Встречей и возвращается в её представлении.
+	m := mustMeetingTZ(t, s, "Колл", 30, "boss@x.io", "2026-11-17", "Asia/Kolkata")
+	if m.Timezone != "Asia/Kolkata" {
+		t.Errorf("зона из профиля должна вернуться с Встречей: %q", m.Timezone)
+	}
+
+	// Пустой timezone — профиль не трогаем, Встреча живёт в прежней зоне.
+	m2 := mustMeeting(t, s, "Второй колл", 30, "boss@x.io", "2026-11-18")
+	if m2.Timezone != "Asia/Kolkata" {
+		t.Errorf("пустая зона не должна стирать профиль: %q", m2.Timezone)
+	}
+
+	// Повторный upsert — зона обновляется у всех Встреч организатора
+	// (она читается из профиля на чтении, а не хранится на Встрече).
+	m3 := mustMeetingTZ(t, s, "Третий колл", 30, "Boss@x.io", "2026-11-19", "Europe/Berlin")
+	if m3.Timezone != "Europe/Berlin" {
+		t.Errorf("upsert должен обновить зону: %q", m3.Timezone)
+	}
+	if reread, ok := s.Meeting(m.ID); !ok || reread.Timezone != "Europe/Berlin" {
+		t.Errorf("перечитанная Встреча должна нести актуальную зону профиля: %+v", reread)
+	}
+
+	// Без профиля — UTC.
+	plain := mustMeeting(t, s, "Без профиля", 30, "other@x.io", "2026-11-17")
+	if plain.Timezone != "UTC" {
+		t.Errorf("Встреча без профиля организатора должна быть в UTC: %q", plain.Timezone)
+	}
+
+	// Некорректная IANA-зона отклоняется и не портит профиль.
+	if _, err := s.CreateMeeting("Кривая зона", "", 30, "boss@x.io", "", "2026-11-17", "Mars/Olympus"); err == nil {
+		t.Error("некорректная IANA-зона должна отклоняться")
+	}
+	if again, err := s.CreateMeeting("После отказа", "", 30, "boss@x.io", "", "2026-11-17", ""); err != nil || again.Timezone != "Europe/Berlin" {
+		t.Errorf("отклонённое создание не меняет профиль: %+v %v", again, err)
+	}
+}
+
+// Ядро ADR-0004: один и тот же момент «сейчас» — разные календарные дни
+// у организаторов в разных зонах. 23:30 UTC — в Колкате (UTC+5:30) уже
+// 05:00 следующего дня, в UTC — всё ещё текущий.
+func TestOrganizerTimezone_SameInstantDifferentDay(t *testing.T) {
+	s := newTestStore(t)
+	s.now = func() time.Time { return time.Date(2026, 11, 16, 23, 30, 0, 0, time.UTC) }
+
+	// Организатор из Колкаты: «сегодня» для него 17.11 — вчерашний 16.11 уже
+	// за окном, а сетка на 17.11 утренняя (05:30 по его часам).
+	kol := mustMeetingTZ(t, s, "Колката", 30, "kol@x.io", "2026-11-17", "Asia/Kolkata")
+	if _, err := s.CreateMeeting("Вчера по UTC", "", 30, "kol@x.io", "", "2026-11-16", ""); !errors.Is(err, ErrDateRequired) {
+		t.Errorf("16.11 для Колкаты уже вчера: %v", err)
+	}
+	statuses := freeStarts(t, s, kol.ID)
+	for start, st := range statuses {
+		if st != SlotFree {
+			t.Errorf("на «утро» Колкаты (%s) все интервалы свободны, получили %s=%s", kol.Date, start, st)
+		}
+	}
+
+	// Без профиля — UTC: 16.11 ещё «сегодня», и к 23:30 день целиком прошёл.
+	utc := mustMeeting(t, s, "ЮТиЦ", 30, "plain@x.io", "2026-11-16")
+	if _, err := s.CreateMeeting("Сегодня в UTC", "", 30, "plain@x.io", "", "2026-11-16", ""); err != nil {
+		t.Errorf("16.11 в UTC ещё сегодня: %v", err)
+	}
+	for start, st := range freeStarts(t, s, utc.ID) {
+		if st != SlotPast {
+			t.Errorf("на 23:30 UTC день 16.11 целиком прошёл (%s=%s)", start, st)
+		}
+	}
+
+	// Окно доступности начинается с дня организатора.
+	availKol := s.PreviewAvailability(30, "kol@x.io")
+	availPlain := s.PreviewAvailability(30, "plain@x.io")
+	if availKol[0].Date != "2026-11-17" || availKol[13].Date != "2026-11-30" {
+		t.Errorf("окно Колкаты должно быть 17.11–30.11: %+v … %+v", availKol[0], availKol[13])
+	}
+	if availPlain[0].Date != "2026-11-16" || availPlain[13].Date != "2026-11-29" {
+		t.Errorf("окно UTC-организатора должно быть 16.11–29.11: %+v … %+v", availPlain[0], availPlain[13])
+	}
+
+	// Бронь у «вчерашнего» для организатора дня отклоняется даже прямо:
+	// у Колкаты 16.11 уже за периметром окна.
+	if _, err := s.Book(kol.ID, "09:00", "Иван", "ivan@x.io"); err != nil {
+		t.Errorf("бронь сегодняшнего для Колкаты дня: %v", err)
+	}
+	if _, err := s.Book(utc.ID, "09:00", "Иван", "ivan@x.io"); !errors.Is(err, ErrSlotUnavailable) {
+		t.Errorf("бронь прошедшего дня UTC-организатора: %v", err)
+	}
+}
+
+// Вердикт «уже прошло» — по wall-clock организатора (ADR-0004): на границе
+// полуночи один и тот же момент даёт разные ответы в зоне и в UTC.
+func TestIsPast_OrganizerZoneAcrossMidnight(t *testing.T) {
+	s := newTestStore(t)
+
+	// Москва (UTC+3). «Сейчас» 04:00 UTC — там 07:00 того же дня: бронь 09:00
+	// в будущем, затем перематываем на 07:00 UTC — в Москве 10:00, финал
+	// 09:30 уже был. По UTC-часам финал 09:30 UTC ещё впереди — решает зона.
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 4, 0, 0, 0, time.UTC) }
+	mos := mustMeetingTZ(t, s, "Москва", 30, "mos@x.io", "2026-11-17", "Europe/Moscow")
+	bMos, err := s.Book(mos.ID, "09:00", "Иван", "ivan@x.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.IsPast(bMos) {
+		t.Error("в 07:00 по Москве бронь 09:00 ещё в будущем")
+	}
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 7, 0, 0, 0, time.UTC) }
+	if !s.IsPast(bMos) {
+		t.Error("в 10:00 по Москве бронь 09:00–09:30 завершена, вердикт — по часам организатора")
+	}
+	// Отмена завершившейся Записи отклоняется тоже по часам организатора:
+	// по UTC финал 09:30 ещё «впереди», по Москве — уже был.
+	if err := s.CancelBooking(bMos.ID, "ivan@x.io"); !errors.Is(err, ErrBookingPast) {
+		t.Errorf("отмена завершившейся по Москве Записи: %v", err)
+	}
+
+	// Нью-Йорк (UTC-5). Финал 01:00 «ночной» брони по UTC уже прошёл к 04:00
+	// UTC 17.11, но по часам организатора ещё 23:00 предыдущего дня — не прошло.
+	s.now = func() time.Time { return time.Date(2026, 11, 16, 23, 0, 0, 0, time.UTC) }
+	if err := s.SetWorkHours("ny@x.io", "2026-11-17", "00:00", "04:00"); err != nil {
+		t.Fatal(err)
+	}
+	ny := mustMeetingTZ(t, s, "Нью-Йорк", 30, "ny@x.io", "2026-11-17", "America/New_York")
+	bNy, err := s.Book(ny.ID, "00:30", "Оля", "olya@x.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = func() time.Time { return time.Date(2026, 11, 17, 4, 0, 0, 0, time.UTC) }
+	if s.IsPast(bNy) {
+		t.Error("по часам Нью-Йорка 00:30–01:00 наступит только в 06:00 UTC — не прошло")
+	}
+	if err := s.CancelBooking(bNy.ID, "olya@x.io"); err != nil {
+		t.Errorf("грядущая по Нью-Йорку Запись должна отменяться: %v", err)
+	}
+}
+
 // Запись на отменённую Встречу отклоняется различимой ошибкой
 // (handler — 422): Встреча не в продаже, но её id Посетитель знать может.
 func TestBook_CancelledMeetingRejected(t *testing.T) {
@@ -689,7 +836,7 @@ func TestCancelMeeting_FreesOwnerTime(t *testing.T) {
 // освобождённое время — доступным.
 func TestCancelMeeting_PersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "calendar.db")
-	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local) }
+	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC) }
 
 	s, err := Open(path)
 	if err != nil {
@@ -732,7 +879,7 @@ func TestCancelMeeting_PersistsAcrossReopen(t *testing.T) {
 // то же окно файла, новое соединение, миграции не повторяются.
 func TestPersistAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "calendar.db")
-	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local) }
+	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC) }
 
 	s, err := Open(path)
 	if err != nil {
@@ -776,7 +923,7 @@ func TestPersistAcrossReopen(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 3 {
+	if migrations != 4 {
 		t.Errorf("миграция должна примениться один раз, посчитано %d", migrations)
 	}
 }
