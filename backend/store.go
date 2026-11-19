@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // база часовых поясов в бинаре (ADR-0004): зоны работают без zoneinfo окружения
 
 	_ "modernc.org/sqlite" // чистый Go, без cgo (ADR-0001)
 )
@@ -57,6 +58,7 @@ type Meeting struct {
 	OwnerName   string    `json:"ownerName"`   // имя организатора, необязательное
 	Date        string    `json:"date"`        // "2006-01-02"
 	State       string    `json:"state"`       // "active" | "cancelled"
+	Timezone    string    `json:"timezone"`    // IANA-зона Организатора из профиля; без профиля — "UTC"
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
@@ -107,8 +109,11 @@ var (
 )
 
 const (
-	meetingCols = `id, name, description, duration_min, owner_email, owner_name, date, state, created_at`
-	bookingCols = `id, meeting_id, date, start, end, name, email, state, created_at`
+	// meetings + профиль Организатора: зона резолвится на чтении (ADR-0004),
+	// без профиля — «UTC» (детерминированный дефолт, не локаль процесса).
+	meetingCols       = `m.id, m.name, m.description, m.duration_min, m.owner_email, m.owner_name, m.date, m.state, m.created_at, COALESCE(o.timezone, 'UTC')`
+	meetingFromClause = `FROM meetings m LEFT JOIN organizers o ON o.email = m.owner_email`
+	bookingCols       = `id, meeting_id, date, start, end, name, email, state, created_at`
 )
 
 // Store — хранилище на SQLite (ADR-0001). Публичные методы — тот же
@@ -153,25 +158,54 @@ func NewStore() *Store {
 // Close освобождает соединение.
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) today() string { return s.now().Format("2006-01-02") }
+// --- Часовой пояс Организатора (ADR-0004) ---
 
-func (s *Store) windowLast() string {
-	base, _ := time.Parse("2006-01-02", s.today())
+// zoneNameVia — IANA-имя зоны из профиля Организатора; без профиля — «UTC».
+// Все вычисления времени (календарные дни, Окно доступности, вердикт
+// «уже прошло») идут в этой зоне, а не в локации процесса.
+func zoneNameVia(e execer, ownerEmail string) string {
+	if ownerEmail == "" {
+		return "UTC"
+	}
+	var tz string
+	if err := e.QueryRow(`SELECT timezone FROM organizers WHERE email = ?`, ownerEmail).Scan(&tz); err != nil {
+		return "UTC"
+	}
+	return tz
+}
+
+// zoneVia — Location по профилю; некорректное значение в базе не ломает
+// детерминизм — фолбэк UTC (создание с такой зоной отклоняется заранее).
+func zoneVia(e execer, ownerEmail string) *time.Location {
+	loc, err := time.LoadLocation(zoneNameVia(e, ownerEmail))
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// resolveZone — зона Организатора по email (вне транзакции).
+func (s *Store) resolveZone(ownerEmail string) *time.Location { return zoneVia(s.db, ownerEmail) }
+
+func (s *Store) todayIn(zone *time.Location) string { return s.now().In(zone).Format("2006-01-02") }
+
+func (s *Store) windowLastIn(zone *time.Location) string {
+	base, _ := time.Parse("2006-01-02", s.todayIn(zone))
 	return base.AddDate(0, 0, windowDays-1).Format("2006-01-02")
 }
 
-func (s *Store) inWindow(date string) bool {
+func (s *Store) inWindow(date string, zone *time.Location) bool {
 	if _, err := time.Parse("2006-01-02", date); err != nil {
 		return false
 	}
-	today := s.today()
-	return date >= today && date <= s.windowLast()
+	today := s.todayIn(zone)
+	return date >= today && date <= s.windowLastIn(zone)
 }
 
-// dayNowMin — «сейчас» в минутах для выбранного дня; дни в будущем и
-// прошлом получают DayInFuture / DayInPast.
-func (s *Store) dayNowMin(date string) int {
-	now := s.now()
+// dayNowMin — «сейчас» в минутах для выбранного дня по часам зоны; дни
+// в будущем и прошлом получают DayInFuture / DayInPast.
+func (s *Store) dayNowMin(zone *time.Location, date string) int {
+	now := s.now().In(zone)
 	today := now.Format("2006-01-02")
 	switch {
 	case date > today:
@@ -231,57 +265,86 @@ func meetingFrom(row rowScanner) (*Meeting, bool) {
 		date       string
 		state      string
 		created    string
+		tz         string
 	)
-	if err := row.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &state, &created); err != nil {
+	if err := row.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &state, &created, &tz); err != nil {
 		return nil, false
 	}
 	t, _ := time.Parse(time.RFC3339Nano, created)
 	return &Meeting{ID: pubID("m", id), Name: name, Description: desc, DurationMin: dur,
-		OwnerEmail: oe, OwnerName: on, Date: date, State: state, CreatedAt: t}, true
+		OwnerEmail: oe, OwnerName: on, Date: date, State: state, Timezone: tz, CreatedAt: t}, true
 }
 
 func meetingByID(e execer, n int64) (*Meeting, bool) {
-	return meetingFrom(e.QueryRow(`SELECT `+meetingCols+` FROM meetings WHERE id = ?`, n))
+	return meetingFrom(e.QueryRow(`SELECT `+meetingCols+` `+meetingFromClause+` WHERE m.id = ?`, n))
 }
 
 // CreateMeeting создаёт Встречу, назначенную на конкретный день окна.
-func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEmail, ownerName, date string) (*Meeting, error) {
+// Непустой timezone — upsert профиля Организатора (пустой — профиль не
+// трогает); «сегодня» и Окно доступности валидируются по часам зоны (ADR-0004).
+func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEmail, ownerName, date, timezone string) (*Meeting, error) {
 	if name == "" {
 		return nil, fmt.Errorf("название обязательно")
 	}
 	if !ValidEmail(ownerEmail) {
 		return nil, ErrOwnerRequired
 	}
-	if !s.inWindow(date) {
-		return nil, ErrDateRequired
-	}
 	if durationMin <= 0 || durationMin > 24*60 {
 		return nil, fmt.Errorf("некорректная продолжительность: %d", durationMin)
 	}
+	timezone = strings.TrimSpace(timezone)
+	if timezone != "" {
+		if _, err := time.LoadLocation(timezone); err != nil {
+			return nil, fmt.Errorf("некорректный часовой пояс: %s", timezone)
+		}
+	}
 	createdAt := s.now().UTC().Format(time.RFC3339Nano)
-	res, err := s.db.Exec(`INSERT INTO meetings (name, description, duration_min, owner_email, owner_name, date, created_at)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if timezone != "" {
+		if _, err := tx.Exec(`INSERT INTO organizers (email, timezone) VALUES (?, ?)
+			ON CONFLICT(email) DO UPDATE SET timezone = excluded.timezone`,
+			ownerEmail, timezone); err != nil {
+			return nil, err
+		}
+	}
+	// Дата проверяется в зоне профиля — уже обновлённого этим запросом.
+	if !s.inWindow(date, zoneVia(tx, ownerEmail)) {
+		return nil, ErrDateRequired
+	}
+	res, err := tx.Exec(`INSERT INTO meetings (name, description, duration_min, owner_email, owner_name, date, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		name, description, durationMin, ownerEmail, ownerName, date, createdAt)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	tzName := zoneNameVia(tx, ownerEmail)
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	t, _ := time.Parse(time.RFC3339Nano, createdAt)
 	return &Meeting{ID: pubID("m", id), Name: name, Description: description, DurationMin: durationMin,
-		OwnerEmail: ownerEmail, OwnerName: ownerName, Date: date, State: MeetingActive, CreatedAt: t}, nil
+		OwnerEmail: ownerEmail, OwnerName: ownerName, Date: date, State: MeetingActive,
+		Timezone: tzName, CreatedAt: t}, nil
 }
 
 // Meetings возвращает доступные Встречи — все (для посетителя) или одного
 // организатора, если owner непустой; отменённые исключены и там, и там.
 // Колонки email — COLLATE NOCASE, регистр не значим.
 func (s *Store) Meetings(owner string) []*Meeting {
-	q := `SELECT ` + meetingCols + ` FROM meetings WHERE state = ?`
+	q := `SELECT ` + meetingCols + ` ` + meetingFromClause + ` WHERE m.state = ?`
 	args := []any{MeetingActive}
 	if owner != "" {
-		q += ` AND owner_email = ?`
+		q += ` AND m.owner_email = ?`
 		args = append(args, owner)
 	}
-	q += ` ORDER BY date, created_at, id`
+	q += ` ORDER BY m.date, m.created_at, m.id`
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil
@@ -389,8 +452,9 @@ func (s *Store) DaySlots(meetingID string) ([]Slot, bool) {
 		return nil, false
 	}
 	h := s.WorkHours(m.OwnerEmail, m.Date)
+	zone := s.resolveZone(m.OwnerEmail)
 	busy := busyByOwner(s.db, m.OwnerEmail, m.Date, m.Date)[m.Date]
-	return GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(m.Date), busy), true
+	return GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(zone, m.Date), busy), true
 }
 
 // PreviewSlots — превью сетки дня для ещё не созданной Встречи (Сценарий 1:
@@ -398,11 +462,12 @@ func (s *Store) DaySlots(meetingID string) ([]Slot, bool) {
 // Если owner задан, учитываются его уже забронированные Встречи.
 func (s *Store) PreviewSlots(ownerEmail, date string, durationMin int) []Slot {
 	h := s.WorkHours(ownerEmail, date)
+	zone := s.resolveZone(ownerEmail)
 	var busy []Interval
 	if ownerEmail != "" {
 		busy = busyByOwner(s.db, ownerEmail, date, date)[date]
 	}
-	return GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(date), busy)
+	return GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(zone, date), busy)
 }
 
 // MeetingAvailability — число свободных Интервалов на день Встречи
@@ -419,11 +484,12 @@ func (s *Store) MeetingAvailability(meetingID string) (DayAvailability, bool) {
 // PreviewAvailability — окно доступности для создаваемой Встречи: каждый
 // день считается по своим границам этого организатора.
 func (s *Store) PreviewAvailability(durationMin int, ownerEmail string) []DayAvailability {
+	zone := s.resolveZone(ownerEmail)
 	out := make([]DayAvailability, 0, windowDays)
-	base, _ := time.Parse("2006-01-02", s.today())
+	base, _ := time.Parse("2006-01-02", s.todayIn(zone))
 	var allBusy map[string][]Interval
 	if ownerEmail != "" {
-		allBusy = busyByOwner(s.db, ownerEmail, s.today(), s.windowLast())
+		allBusy = busyByOwner(s.db, ownerEmail, s.todayIn(zone), s.windowLastIn(zone))
 	}
 	for i := 0; i < windowDays; i++ {
 		date := base.AddDate(0, 0, i).Format("2006-01-02")
@@ -432,7 +498,7 @@ func (s *Store) PreviewAvailability(durationMin int, ownerEmail string) []DayAva
 		if allBusy != nil {
 			busy = allBusy[date]
 		}
-		slots := GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(date), busy)
+		slots := GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(zone, date), busy)
 		out = append(out, DayAvailability{Date: date, Free: FreeCount(slots)})
 	}
 	return out
@@ -469,14 +535,15 @@ func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 	if m.State == MeetingCancelled {
 		return nil, ErrMeetingCancelled
 	}
-	today := s.today()
-	if m.Date < today || m.Date > s.windowLast() {
+	// «Сегодня», окно и «прошло» — по часам организатора Встречи (ADR-0004).
+	zone := zoneVia(tx, m.OwnerEmail)
+	if m.Date < s.todayIn(zone) || m.Date > s.windowLastIn(zone) {
 		return nil, ErrOutsideWindow
 	}
 
 	h := workHoursVia(tx, m.OwnerEmail, m.Date)
 	busy := busyByOwner(tx, m.OwnerEmail, m.Date, m.Date)[m.Date]
-	slots := GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(m.Date), busy)
+	slots := GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(zone, m.Date), busy)
 	slot, allowed := SlotAllowed(slots, start)
 	if !allowed {
 		if slot.Status == SlotTaken {
@@ -546,8 +613,10 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var state, owner, date, end string
-	err = tx.QueryRow(`SELECT state, email, date, end FROM bookings WHERE id = ?`, n).Scan(&state, &owner, &date, &end)
+	var state, visitorEmail, date, end, ownerEmail string
+	err = tx.QueryRow(`SELECT b.state, b.email, b.date, b.end, m.owner_email
+		FROM bookings b JOIN meetings m ON m.id = b.meeting_id WHERE b.id = ?`, n).
+		Scan(&state, &visitorEmail, &date, &end, &ownerEmail)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrBookingNotFound
@@ -557,14 +626,15 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 	// Колонка email — COLLATE NOCASE; сверка самозаявленной идентичности
 	// без учёта регистра (GLOSSARY: Посетитель). Отклоняем и для уже
 	// отменённой Записи: отменить её мог только её посетитель.
-	if !strings.EqualFold(strings.TrimSpace(owner), strings.TrimSpace(email)) {
+	if !strings.EqualFold(strings.TrimSpace(visitorEmail), strings.TrimSpace(email)) {
 		return ErrBookingEmailMismatch
 	}
 	if state == BookingCancelled {
 		return nil // повторная отмена — успешный no-op (идемпотентность)
 	}
-	// Отменить можно только предстоящую Запись (GLOSSARY: Запись).
-	if s.IsPast(&Booking{Date: date, End: end}) {
+	// Отменить можно только предстоящую Запись (GLOSSARY: Запись); вердикт
+	// — по часам Организатора Встречи (ADR-0004).
+	if s.pastIn(zoneVia(tx, ownerEmail), date, end) {
 		return ErrBookingPast
 	}
 	if _, err := tx.Exec(`UPDATE bookings SET state = ? WHERE id = ?`, BookingCancelled, n); err != nil {
@@ -574,16 +644,28 @@ func (s *Store) CancelBooking(bookingID, email string) error {
 }
 
 // IsPast — Встреча закончилась (автоперенос Записи в группу «Прошедшие»).
+// Wall-clock окончание понимается в зоне Организатора Встречи (ADR-0004);
+// Запись без различимой Встречи — UTC.
 func (s *Store) IsPast(b *Booking) bool {
-	now := s.now()
-	endMin, ok := ParseHM(b.End)
+	zone := time.UTC
+	if m, ok := s.Meeting(b.MeetingID); ok {
+		zone = s.resolveZone(m.OwnerEmail)
+	}
+	return s.pastIn(zone, b.Date, b.End)
+}
+
+// pastIn — завершена ли Запись (date + "HH:MM" окончание) на текущий момент
+// по часам зоны.
+func (s *Store) pastIn(zone *time.Location, date, end string) bool {
+	now := s.now().In(zone)
+	endMin, ok := ParseHM(end)
 	if !ok {
 		return true
 	}
-	d, err := time.Parse("2006-01-02", b.Date)
+	d, err := time.Parse("2006-01-02", date)
 	if err != nil {
 		return true
 	}
-	end := time.Date(d.Year(), d.Month(), d.Day(), 0, endMin, 0, 0, now.Location())
-	return !end.After(now)
+	e := time.Date(d.Year(), d.Month(), d.Day(), 0, endMin, 0, 0, zone)
+	return !e.After(now)
 }

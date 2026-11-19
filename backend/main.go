@@ -100,12 +100,13 @@ func (srv *server) handleMeetings(w http.ResponseWriter, r *http.Request) {
 			OwnerEmail  string `json:"ownerEmail"`
 			OwnerName   string `json:"ownerName"`
 			Date        string `json:"date"`
+			Timezone    string `json:"timezone"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
-		created, err := srv.store.CreateMeeting(m.Name, m.Description, m.DurationMin, m.OwnerEmail, m.OwnerName, m.Date)
+		created, err := srv.store.CreateMeeting(m.Name, m.Description, m.DurationMin, m.OwnerEmail, m.OwnerName, m.Date, m.Timezone)
 		if err != nil {
 			writeErr(w, http.StatusUnprocessableEntity, err)
 			return
@@ -279,7 +280,8 @@ func main() {
 	}
 	if len(store.Meetings("")) == 0 {
 		demoDate := time.Now().AddDate(0, 0, demo).Format("2006-01-02")
-		if _, err := store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, "demo@calendar.app", "Демо-организатор", demoDate); err != nil {
+		// Демо-зона — Europe/Moscow: профиль upsert-ится вместе с Встречей (ADR-0004).
+		if _, err := store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, "demo@calendar.app", "Демо-организатор", demoDate, "Europe/Moscow"); err != nil {
 			log.Fatal(err)
 		}
 	}

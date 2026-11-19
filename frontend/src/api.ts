@@ -74,6 +74,7 @@ export const api = {
     ownerEmail: string;
     ownerName: string;
     date: string;
+    timezone?: string;
   }): Promise<Meeting> => {
     const { data, ...res } = await client.POST("/api/meetings", { body: m });
     ensureOk(res);

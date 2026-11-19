@@ -1,9 +1,10 @@
 // Сценарий 1: организатор создаёт встречу. Поля: название, описание, email
-// организатора, продолжительность и дата (встреча назначается на конкретный
-// день). Конкретный интервал не выбирается — список интервалов показывает превью
-// доступности. Границы рабочего дня берутся для пары (email, дата) и
-// сохраняются только для выбранного дня; сохранение границ обновляет превью
-// НА МЕСТЕ, без перезагрузки/сброса формы создания встречи.
+// организатора, продолжительность, часовой пояс (IANA, профиль организатора —
+// ADR-0004) и дата (встреча назначается на конкретный день). Конкретный
+// интервал не выбирается — список интервалов показывает превью доступности.
+// Границы рабочего дня берутся для пары (email, дата) и сохраняются только
+// для выбранного дня; сохранение границ обновляет превью НА МЕСТЕ, без
+// перезагрузки/сброса формы создания встречи.
 // После сохранения — список всех встреч организатора (пустой, если их нет).
 
 import { api } from "../api";
@@ -23,6 +24,7 @@ interface CreateState {
   description: string;
   owner: string;
   ownerName: string;
+  timezone: string;
   duration: number;
   date: string | null; // день, на который назначается встреча
   weekOffset: number;
@@ -36,6 +38,15 @@ interface CreateState {
 // сервер по-прежнему принимает любой целый 1..1440.
 const CANONICAL_DURATIONS = [15, 30, 45, 60, 90, 120, 150, 180];
 
+// Зона браузера как предзаполнение поля «Часовой пояс» (user story 2);
+// в нестандартных средах — пусто, сервер тогда не трогает профиль.
+function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export async function renderCreate(app: HTMLElement): Promise<void> {
   const state: CreateState = {
@@ -43,6 +54,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
     description: "",
     owner: localStorage.getItem(OWNER_EMAIL_KEY) ?? "",
     ownerName: localStorage.getItem(OWNER_NAME_KEY) ?? "",
+    timezone: browserTimezone(),
     duration: 30,
     date: null,
     weekOffset: 0,
@@ -68,6 +80,8 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
         <label>Email организатора <input id="owner" type="email" placeholder="boss@example.com" />
           <small class="muted">по нему учитывается занятость интервалов во всех ваших встречах</small></label>
         <label>Имя организатора <input id="owner-name" placeholder="Необязательно, видно посетителям" /></label>
+        <label>Часовой пояс <input id="tz" placeholder="Europe/Moscow" />
+          <small class="muted">IANA-зона: рабочий день, даты и «уже прошло» считаются по вашим часам</small></label>
         <label>Продолжительность
           <select id="dur">
             ${CANONICAL_DURATIONS.map(
@@ -97,6 +111,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
   const descInput = $<HTMLTextAreaElement>("#desc");
   const ownerInput = $<HTMLInputElement>("#owner");
   const ownerNameInput = $<HTMLInputElement>("#owner-name");
+  const tzInput = $<HTMLInputElement>("#tz");
   const durSelect = $<HTMLSelectElement>("#dur");
   const saveBtn = $<HTMLButtonElement>("#save");
   const calEl = $<HTMLDivElement>("#cal");
@@ -105,6 +120,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
   const errEl = $<HTMLDivElement>("#form-error");
   ownerInput.value = state.owner;
   ownerNameInput.value = state.ownerName;
+  tzInput.value = state.timezone;
 
   const updateSaveBtn = () => {
     saveBtn.disabled = !(state.name.trim() && emailLike(state.owner) && state.date);
@@ -249,6 +265,9 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
   ownerNameInput.addEventListener("input", () => {
     state.ownerName = ownerNameInput.value;
   });
+  tzInput.addEventListener("input", () => {
+    state.timezone = tzInput.value;
+  });
   ownerInput.addEventListener("change", async () => {
     state.owner = ownerInput.value.trim();
     await Promise.all([refreshPreview(), loadHours()]);
@@ -271,6 +290,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
         ownerEmail: state.owner.trim(),
         ownerName: state.ownerName.trim(),
         date: state.date,
+        timezone: state.timezone.trim() || undefined,
       });
       localStorage.setItem(OWNER_EMAIL_KEY, state.owner.trim());
       localStorage.setItem(OWNER_NAME_KEY, state.ownerName.trim());

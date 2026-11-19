@@ -99,7 +99,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Забронировать интервал; 409 — занят (включая другие встречи организатора), 422 — встреча отменена */
+        /** @description Забронировать интервал; 409 — занят (включая другие встречи организатора), 422 — встреча отменена. При одновременных запросах на пересекающиеся интервалы одного организатора ровно одна запись succeeds, остальные получают 409 (гарантия непересечения) */
         post: operations["MeetingsApi_book"];
         delete?: never;
         options?: never;
@@ -250,6 +250,8 @@ export interface components {
             date: string;
             /** @description Состояние Встречи; отменённая не выдаётся в списках и не бронируется */
             state: components["schemas"]["MeetingState"];
+            /** @description IANA-зона Организатора из его профиля: Рабочий день, календарные даты, Окно доступности и вердикт «уже прошло» считаются в ней; без профиля — UTC */
+            timezone: string;
             /** Format: date-time */
             createdAt: string;
         };
@@ -268,6 +270,8 @@ export interface components {
             ownerName?: string;
             /** Format: date */
             date: string;
+            /** @description IANA-зона Организатора; при сохранении Встречи профиль создаётся/обновляется, пустое значение — профиль не трогать */
+            timezone?: string;
         };
         /** @description Временной интервал (интервал) дня */
         Slot: {
