@@ -540,7 +540,7 @@ func TestCreateMeeting_StartStepValidation(t *testing.T) {
 // Шаг переживает перезакрытие базы: значение и NULL (дефолт) читаются из файла.
 func TestStartStep_PersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "calendar.db")
-	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local) }
+	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC) }
 
 	s, err := Open(path)
 	if err != nil {
