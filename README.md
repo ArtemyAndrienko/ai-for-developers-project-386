@@ -274,6 +274,28 @@ mise run codegen        # TypeSpec -> OpenAPI -> типы SDK после пра�
 
 `mise run check` = линтеры + тесты + контракт + сборка; тот же набор CI гоняет на каждый push.
 
+## Деплой (Render, Docker)
+
+Единый образ: в multi-stage-сборке фронтенд собирается `npm run build` и
+запекается в Go-бинарь через `go:embed` (`backend/web/dist`); один процесс
+отдаёт SPA и `/api/*`, слушает **`$PORT`** (конвенция Render; приоритет
+`ADDR > PORT > :8080`), есть liveliness-проб `GET /api/health`.
+
+```bash
+docker build -t calendar-app .
+docker run -e PORT=8123 -p 8123:8123 calendar-app   # http://127.0.0.1:8123
+```
+
+Хостинг: docker-сервис на Render создаётся через render-MCP (конфиг —
+`.opencode/opencode.json`, секрет берётся из переменной окружения
+`RENDER_API_KEY`). Сборку на Render делает сам Render из `Dockerfile` на push
+в `main` (auto-deploy).
+
+Ограничение пилота: база SQLite — файл внутри контейнера (`DATA_PATH`, по
+умолчанию `/srv/data/calendar.db`), **эфемерная**: редиплой или рестарт
+обнуляют данные (free-план). Персистентность — отдельная задача (Render disk
+или внешняя БД), как и авторизация.
+
 ---
 
 <details>

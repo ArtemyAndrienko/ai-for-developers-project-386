@@ -15,6 +15,13 @@
 | `mise run build` | `backend/bin/calendar-api` + `frontend/dist` |
 | `mise run check` | **все проверки разом** (то же выполняет CI на каждый push) |
 | `mise run codegen` | TypeSpec → `openapi.json` → `frontend/src/api/schema.d.ts` |
+| `docker build -t calendar-app .` | единый образ (SPA в Go-бинаре, слушает `$PORT`) |
+
+## Деплой
+
+Docker-сервис на Render создаётся/обновляется через render-MCP
+(`.opencode/opencode.json`, требует переменную `RENDER_API_KEY`). Данные
+SQLite в контейнере эфемерны — персистентность пока не гарантирована.
 
 ## Структура
 
