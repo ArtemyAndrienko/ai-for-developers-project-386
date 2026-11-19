@@ -2,7 +2,14 @@
 // конкретный день) и свободный интервал, подтверждает запись имя+email.
 
 import { api, ApiError } from "../api";
-import { emailLike, LAST_EMAIL_KEY, ruLongDate, slotLabel, visitorClashes } from "../utils";
+import {
+  emailLike,
+  LAST_EMAIL_KEY,
+  nearestFreeStarts,
+  ruLongDate,
+  slotLabel,
+  visitorClashes,
+} from "../utils";
 import type { Meeting, Slot } from "../types";
 
 type Step = "select" | "confirm" | "done";
@@ -16,6 +23,8 @@ interface BookState {
   name: string;
   email: string;
   error: string | null;
+  // Жёсткий конфликт (409): интервал, который пытались забронировать.
+  conflict: Slot | null;
 }
 
 export async function renderBook(app: HTMLElement): Promise<void> {
@@ -28,6 +37,7 @@ export async function renderBook(app: HTMLElement): Promise<void> {
     name: "",
     email: localStorage.getItem(LAST_EMAIL_KEY) ?? "",
     error: null,
+    conflict: null,
   };
 
   const meeting = () => state.meetings.find((m) => m.id === state.meetingId) ?? null;
@@ -51,6 +61,7 @@ export async function renderBook(app: HTMLElement): Promise<void> {
       app.querySelector("#again")!.addEventListener("click", async () => {
         state.step = "select";
         state.slotStart = null;
+        state.conflict = null;
         if (state.meetingId) state.slots = await api.slots(state.meetingId);
         ui();
       });
@@ -90,7 +101,7 @@ export async function renderBook(app: HTMLElement): Promise<void> {
           );
           warn.innerHTML = clashes
             .map(
-              (b) => `<div class="warn">Внимание: у вас уже есть запись ${b.start}–${b.end}
+              (b) => `<div class="warn">Внимание: у ВАС уже есть запись ${b.start}–${b.end}
                 на «${b.meetingName}» (${b.meetingOwnerName || b.meetingOwnerEmail})
                 в это же время. Бронирование не блокируется — но время пересечётся.</div>`,
             )
@@ -104,6 +115,7 @@ export async function renderBook(app: HTMLElement): Promise<void> {
       app.querySelector("#edit")!.addEventListener("click", () => {
         state.step = "select";
         state.error = null;
+        state.conflict = null;
         ui();
       });
       app.querySelector("#submit")!.addEventListener("click", async () => {
@@ -119,11 +131,16 @@ export async function renderBook(app: HTMLElement): Promise<void> {
           state.step = "done";
         } catch (e) {
           if (e instanceof ApiError && e.status === 409) {
-            // Интервал успели забронировать (в т.ч. в другой встрече организатора).
+            // Жёсткий конфликт: интервал успели забронировать (в т.ч. в другой
+            // встрече организатора). Возврат на выбор — баннер + ближайшие
+            // свободные старты из перезагруженной сетки. Без имён третьих лиц.
+            const attempted = state.slots.find((s) => s.start === state.slotStart);
             state.step = "select";
             state.slotStart = null;
-            state.error = e.message || "Интервал только что заняли. Выберите другое время.";
+            state.error = null;
+            state.conflict = attempted ? { ...attempted } : null;
             state.slots = await api.slots(state.meetingId!);
+            if (!state.conflict) state.error = "Интервал только что заняли. Выберите другое время.";
           } else {
             state.error = e instanceof Error ? e.message : "Ошибка записи";
           }
@@ -154,7 +171,7 @@ export async function renderBook(app: HTMLElement): Promise<void> {
           ${
             !state.meetingId
               ? `<div class="hint">Выберите встречу выше.</div>`
-              : slotsList(state)
+              : conflictBanner(state) + slotsList(state)
           }
           <div class="row">
             <button class="btn ghost" id="back">Назад</button>
@@ -168,19 +185,31 @@ export async function renderBook(app: HTMLElement): Promise<void> {
         state.meetingId = b.dataset.meeting!;
         state.slotStart = null;
         state.error = null;
+        state.conflict = null;
         state.slots = await api.slots(state.meetingId);
+        ui();
+      }),
+    );
+
+    app.querySelectorAll<HTMLElement>("[data-free-start]").forEach((b) =>
+      b.addEventListener("click", () => {
+        // Клик по чипу = выбор этого старта (баннер больше не нужен).
+        state.slotStart = b.dataset.freeStart!;
+        state.conflict = null;
         ui();
       }),
     );
 
     app.querySelector("#back")!.addEventListener("click", () => {
       state.slotStart = null;
+      state.conflict = null;
       ui();
     });
     app.querySelector("#next")!.addEventListener("click", () => {
       if (state.slotStart) {
         state.step = "confirm";
         state.error = null;
+        state.conflict = null;
         ui();
       }
     });
@@ -214,6 +243,24 @@ function infoCard(state: BookState, m: Meeting | null): string {
         m ? `${m.durationMin} мин` : "—"
       }</strong></div>
     </div>`;
+}
+
+// Баннер жёсткого конфликта (GLOSSARY: «Конфликт» по Организатору, решение #6):
+// нейтральный текст о занятости организатора, без имён встреч/записей третьих
+// лиц + чипы ближайших свободных стартов из перезагруженной сетки.
+function conflictBanner(state: BookState): string {
+  if (!state.conflict) return "";
+  const c = state.conflict;
+  const nearest = nearestFreeStarts(state.slots, c.start);
+  const chips = nearest.map((s) => `<button class="chip" data-free-start="${s.start}">${s.start}</button>`).join("");
+  return `
+    <div class="conflict">Организатор в это время занят — интервал ${c.start}–${c.end}
+      только что забронировали.</div>
+    ${
+      nearest.length
+        ? `<div class="free-starts"><span class="muted">Ближайшие свободные:</span> ${chips}</div>`
+        : `<div class="hint">Свободных интервалов позже не осталось — выберите другую дату встречи.</div>`
+    }`;
 }
 
 function slotsList(state: BookState): string {
