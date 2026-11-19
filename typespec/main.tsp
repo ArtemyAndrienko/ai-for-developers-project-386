@@ -254,6 +254,7 @@ interface PreviewApi {
     @query duration: int32,
     @query @doc("Шаг стартов: целый 1..duration, иначе 400") step?: int32,
     @query owner?: string,
+    @query @doc("IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC") timezone?: string,
   ): DayAvailability[] | ApiError<400>;
 
   @route("/slots")
@@ -264,6 +265,7 @@ interface PreviewApi {
     @query date: plainDate,
     @query duration: int32,
     @query @doc("Шаг стартов: целый 1..duration, иначе 400") step?: int32,
+    @query @doc("IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC") timezone?: string,
   ): Slot[] | ApiError<400>;
 }
 

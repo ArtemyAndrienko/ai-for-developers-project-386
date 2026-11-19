@@ -400,6 +400,16 @@
               "type": "string"
             },
             "explode": false
+          },
+          {
+            "name": "timezone",
+            "in": "query",
+            "required": false,
+            "description": "IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC",
+            "schema": {
+              "type": "string"
+            },
+            "explode": false
           }
         ],
         "responses": {
@@ -471,6 +481,16 @@
             "schema": {
               "type": "integer",
               "format": "int32"
+            },
+            "explode": false
+          },
+          {
+            "name": "timezone",
+            "in": "query",
+            "required": false,
+            "description": "IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC",
+            "schema": {
+              "type": "string"
             },
             "explode": false
           }

@@ -202,6 +202,19 @@ func (s *Store) resolveZone(ownerEmail string) *time.Location { return zoneVia(s
 // Для ответов, где зона объясняет, в каких часах стоят границы рабочего дня.
 func (s *Store) OrganizerZone(ownerEmail string) string { return zoneNameVia(s.db, ownerEmail) }
 
+// previewZone — зона превью ещё не сохранённой Встречи: переданная >
+// сохранённый профиль > UTC. Превью и будущее сохранение должны считать
+// «сегодня» и «прошло» одними часами, иначе у границы полуночи превью
+// разъедется с реальностью. Некорректная переданная — как непереданная.
+func (s *Store) previewZone(ownerEmail, fallbackZone string) *time.Location {
+	if name := strings.TrimSpace(fallbackZone); name != "" {
+		if loc, err := time.LoadLocation(name); err == nil {
+			return loc
+		}
+	}
+	return s.resolveZone(ownerEmail)
+}
+
 func (s *Store) todayIn(zone *time.Location) string { return s.now().In(zone).Format("2006-01-02") }
 
 func (s *Store) windowLastIn(zone *time.Location) string {
@@ -490,10 +503,11 @@ func (s *Store) DaySlots(meetingID string) ([]Slot, bool) {
 // PreviewSlots — превью сетки дня для ещё не созданной Встречи (Сценарий 1:
 // организатор видит доступность, конкретный Интервал не выбирает).
 // Если owner задан, учитываются его уже забронированные Встречи.
-// stepMin <= 0 — шаг равен длительности.
-func (s *Store) PreviewSlots(ownerEmail, date string, durationMin, stepMin int) []Slot {
+// stepMin <= 0 — шаг равен длительности; fallbackZone — зона превью
+// (переданная > сохранённый профиль > UTC).
+func (s *Store) PreviewSlots(ownerEmail, date string, durationMin, stepMin int, fallbackZone string) []Slot {
 	h := s.WorkHours(ownerEmail, date)
-	zone := s.resolveZone(ownerEmail)
+	zone := s.previewZone(ownerEmail, fallbackZone)
 	var busy []Interval
 	if ownerEmail != "" {
 		busy = busyByOwner(s.db, ownerEmail, date, date)[date]
@@ -514,9 +528,10 @@ func (s *Store) MeetingAvailability(meetingID string) (DayAvailability, bool) {
 
 // PreviewAvailability — окно доступности для создаваемой Встречи: каждый
 // день считается по своим границам этого организатора. stepMin <= 0 — шаг
-// равен длительности.
-func (s *Store) PreviewAvailability(durationMin, stepMin int, ownerEmail string) []DayAvailability {
-	zone := s.resolveZone(ownerEmail)
+// равен длительности; fallbackZone — зона превью (переданная > сохранённый
+// профиль > UTC).
+func (s *Store) PreviewAvailability(durationMin, stepMin int, ownerEmail, fallbackZone string) []DayAvailability {
+	zone := s.previewZone(ownerEmail, fallbackZone)
 	out := make([]DayAvailability, 0, windowDays)
 	base, _ := time.Parse("2006-01-02", s.todayIn(zone))
 	var allBusy map[string][]Interval

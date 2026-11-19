@@ -624,6 +624,8 @@ export interface operations {
                 /** @description Шаг стартов: целый 1..duration, иначе 400 */
                 step?: number;
                 owner?: string;
+                /** @description IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC */
+                timezone?: string;
             };
             header?: never;
             path?: never;
@@ -659,6 +661,8 @@ export interface operations {
                 duration: number;
                 /** @description Шаг стартов: целый 1..duration, иначе 400 */
                 step?: number;
+                /** @description IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC */
+                timezone?: string;
             };
             header?: never;
             path?: never;

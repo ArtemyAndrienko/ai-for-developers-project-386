@@ -215,8 +215,11 @@ func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, ErrOwnerRequired)
 		return
 	}
+	// Необязательная IANA-зона: превью до первого сохранения считается по
+	// часам поля «Часовой пояс» (переданная > сохранённый профиль > UTC).
+	tz := q.Get("timezone")
 	if r.PathValue("sub") == "availability" {
-		writeJSON(w, http.StatusOK, srv.store.PreviewAvailability(dur, step, owner))
+		writeJSON(w, http.StatusOK, srv.store.PreviewAvailability(dur, step, owner, tz))
 		return
 	}
 	date := q.Get("date")
@@ -224,7 +227,7 @@ func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("не указан параметр date"))
 		return
 	}
-	writeJSON(w, http.StatusOK, srv.store.PreviewSlots(owner, date, dur, step))
+	writeJSON(w, http.StatusOK, srv.store.PreviewSlots(owner, date, dur, step, tz))
 }
 
 // /api/bookings?email=... — все записи пользователя, прошедшие помечены past.

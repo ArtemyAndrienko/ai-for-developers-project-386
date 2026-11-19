@@ -171,7 +171,7 @@ func TestPreviewSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	slots := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 0)
+	slots := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 0, "")
 	found := false
 	for _, sl := range slots {
 		if sl.Start == "10:00" {
@@ -186,7 +186,7 @@ func TestPreviewSlots(t *testing.T) {
 	}
 
 	// Без owner превью не учитывает чужие брони.
-	for _, sl := range s.PreviewSlots("", "2026-11-17", 60, 0) {
+	for _, sl := range s.PreviewSlots("", "2026-11-17", 60, 0, "") {
 		if sl.Start == "10:00" && sl.Status != SlotFree {
 			t.Error("без email организатора превью не должно показывать занятость")
 		}
@@ -196,7 +196,7 @@ func TestPreviewSlots(t *testing.T) {
 	if err := s.SetWorkHours("boss@x.io", "2026-11-19", "14:00", "18:00"); err != nil {
 		t.Fatal(err)
 	}
-	pv := s.PreviewSlots("boss@x.io", "2026-11-19", 30, 0)
+	pv := s.PreviewSlots("boss@x.io", "2026-11-19", 30, 0, "")
 	if pv[0].Start != "14:00" {
 		t.Errorf("превью должно использовать границы 14:00–18:00, первый интервал %s", pv[0].Start)
 	}
@@ -264,7 +264,7 @@ func TestMeetingOrganizerName(t *testing.T) {
 
 func TestPreviewAndDeleteMeeting(t *testing.T) {
 	s := newTestStore(t)
-	avail := s.PreviewAvailability(30, 0, "")
+	avail := s.PreviewAvailability(30, 0, "", "")
 	if len(avail) != windowDays || avail[0].Date != "2026-11-16" || avail[13].Date != "2026-11-29" {
 		t.Fatalf("окно превью: %+v", avail)
 	}
@@ -579,11 +579,11 @@ func TestStartStep_PersistsAcrossReopen(t *testing.T) {
 // Превью создаваемой встречи понимает шаг: 60/30 — старты каждые 30 минут.
 func TestPreviewSlots_StartStep(t *testing.T) {
 	s := newTestStore(t)
-	plain := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 0)
+	plain := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 0, "")
 	if len(plain) != 9 {
 		t.Errorf("без шага (0 = длительность): ожидалось 9 интервалов, получено %d", len(plain))
 	}
-	dense := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 30)
+	dense := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 30, "")
 	if len(dense) != 17 {
 		t.Fatalf("шаг 30: ожидалось 17 интервалов, получено %d", len(dense))
 	}
@@ -603,7 +603,7 @@ func TestPreviewSlots_StartStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	taken := map[string]SlotStatus{}
-	for _, sl := range s.PreviewSlots("boss@x.io", "2026-11-17", 60, 30) {
+	for _, sl := range s.PreviewSlots("boss@x.io", "2026-11-17", 60, 30, "") {
 		taken[sl.Start] = sl.Status
 	}
 	if taken["10:00"] != SlotTaken || taken["10:30"] != SlotTaken {
@@ -611,9 +611,59 @@ func TestPreviewSlots_StartStep(t *testing.T) {
 	}
 
 	// Окно доступности тоже считается по шагу.
-	avail := s.PreviewAvailability(60, 30, "")
+	avail := s.PreviewAvailability(60, 30, "", "")
 	if len(avail) != windowDays || avail[1].Free != 17 {
 		t.Errorf("плотное окно: %+v", avail)
+	}
+}
+
+// Превью до первого сохранения: приоритет зоны — переданная > сохранённый
+// профиль > UTC. Один момент «сейчас» (23:30 UTC) — у Колкаты уже утро 17.11,
+// в UTC всё ещё 16.11: без параметра превьи жили бы чужими часами.
+func TestPreviewSlots_TimezoneFallback(t *testing.T) {
+	s := newTestStore(t)
+	s.now = func() time.Time { return time.Date(2026, 11, 16, 23, 30, 0, 0, time.UTC) }
+	mustMeetingTZ(t, s, "Колката", 30, "kol@x.io", "2026-11-17", "Asia/Kolkata")
+
+	// Окно: переданная зона важнее сохранённого профиля.
+	fromParam := s.PreviewAvailability(30, 0, "kol@x.io", "UTC")
+	fromProfile := s.PreviewAvailability(30, 0, "kol@x.io", "")
+	fromUTC := s.PreviewAvailability(30, 0, "fresh@x.io", "")
+	if fromParam[0].Date != "2026-11-16" {
+		t.Errorf("переданная зона должна быть важнее профиля: окно открыт %s", fromParam[0].Date)
+	}
+	if fromProfile[0].Date != "2026-11-17" {
+		t.Errorf("без параметра окно считается по сохранённому профилю: %s", fromProfile[0].Date)
+	}
+	if fromUTC[0].Date != "2026-11-16" {
+		t.Errorf("ни параметра, ни профиля — детерминированный UTC: %s", fromUTC[0].Date)
+	}
+
+	// Некорректный фолбэк ведёт себя как непереданный — профиль важнее.
+	bad := s.PreviewAvailability(30, 0, "kol@x.io", "Mars/Olympus")
+	if bad[0].Date != fromProfile[0].Date {
+		t.Errorf("некорректная зона-фолбэк не ломает превью: %s", bad[0].Date)
+	}
+
+	// Сетка того же дня — теми же часами: утро 17.11 по Колкате уже наступило
+	// (ранние старты 04:00–05:00 прошла), а в UTC-фолбэке день будущий.
+	if err := s.SetWorkHours("kol@x.io", "2026-11-17", "04:00", "09:00"); err != nil {
+		t.Fatal(err)
+	}
+	startStatus := func(zone string) map[string]SlotStatus {
+		got := map[string]SlotStatus{}
+		for _, sl := range s.PreviewSlots("kol@x.io", "2026-11-17", 30, 0, zone) {
+			got[sl.Start] = sl.Status
+		}
+		return got
+	}
+	profileGrid := startStatus("")
+	if profileGrid["04:00"] != SlotPast || profileGrid["08:30"] != SlotFree {
+		t.Errorf("по часам профиля 04:00 уже прошло, 08:30 свободно: %v", profileGrid)
+	}
+	utcGrid := startStatus("UTC")
+	if utcGrid["04:00"] != SlotFree {
+		t.Errorf("в UTC-фолбэке 17.11 — будущий день, 04:00 свободен: %v", utcGrid)
 	}
 }
 
@@ -883,8 +933,8 @@ func TestOrganizerTimezone_SameInstantDifferentDay(t *testing.T) {
 	}
 
 	// Окно доступности начинается с дня организатора.
-	availKol := s.PreviewAvailability(30, 0, "kol@x.io")
-	availPlain := s.PreviewAvailability(30, 0, "plain@x.io")
+	availKol := s.PreviewAvailability(30, 0, "kol@x.io", "")
+	availPlain := s.PreviewAvailability(30, 0, "plain@x.io", "")
 	if availKol[0].Date != "2026-11-17" || availKol[13].Date != "2026-11-30" {
 		t.Errorf("окно Колкаты должно быть 17.11–30.11: %+v … %+v", availKol[0], availKol[13])
 	}
