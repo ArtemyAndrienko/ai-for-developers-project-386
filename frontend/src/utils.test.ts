@@ -199,7 +199,7 @@ describe("formatVisitorTime — отображение времени Посет
     const r = formatVisitorTime("10:00", "10:30", "Asia/Kolkata", "Europe/Berlin", "2026-11-15");
     expect(r.sameZone).toBe(false);
     expect(r.primary).toBe("10:00–10:30 GMT+5:30");
-    expect(r.secondary).toBe(" (05:30–06:00)");
+    expect(r.secondary).toBe(" (05:30–06:00 у вас)");
   });
 
   it("одинаковые зоны: чистый вывод без подписей и скобок", () => {
@@ -209,13 +209,27 @@ describe("formatVisitorTime — отображение времени Посет
     expect(r.secondary).toBe("");
   });
 
-  it("полуночный перенос: у посетителя другой день, но подпись даты не меняется", () => {
+  it("перенос через полночь у посетителя, но календарный день тот же: без маркера", () => {
     // 00:30–01:00 MSK (UTC+3) 15.11 = 21:30–22:00 UTC 14.11 = 03:00–03:30
     // Колкаты 15.11: в secondary только HH:MM, календарная дата остаётся днём организатора.
     const r = formatVisitorTime("00:30", "01:00", "Europe/Moscow", "Asia/Kolkata", "2026-11-15");
     expect(r.sameZone).toBe(false);
     expect(r.primary).toBe("00:30–01:00 GMT+3");
-    expect(r.secondary).toBe(" (03:00–03:30)");
+    expect(r.secondary).toBe(" (03:00–03:30 у вас)");
+  });
+
+  it("перенос суток назад: у посетителя предыдущий день", () => {
+    // 00:30–01:00 MSK 15.11 = 21:30 UTC 14.11 = 16:30–17:00 Нью-Йорка (EST) 14.11.
+    const r = formatVisitorTime("00:30", "01:00", "Europe/Moscow", "America/New_York", "2026-11-15");
+    expect(r.primary).toBe("00:30–01:00 GMT+3");
+    expect(r.secondary).toBe(" (16:30–17:00 у вас, предыдущий день)");
+  });
+
+  it("перенос суток вперёд: у посетителя следующий день", () => {
+    // 19:00–19:30 Нью-Йорка (EST) 15.11 = 00:00 UTC 16.11 = 05:30–06:00 Колкаты 16.11.
+    const r = formatVisitorTime("19:00", "19:30", "America/New_York", "Asia/Kolkata", "2026-11-15");
+    expect(r.primary).toBe("19:00–19:30 GMT-5");
+    expect(r.secondary).toBe(" (05:30–06:00 у вас, следующий день)");
   });
 
   it("зона посетителя неизвестна (фолбэк Intl): только часы организатора с подписью", () => {
