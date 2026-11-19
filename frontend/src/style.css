@@ -236,6 +236,34 @@ input, textarea, select {
   font-size: 14px;
 }
 
+/* Жёсткий конфликт (занято у организатора): нейтральный серый — отличим
+   от мягкого предупреждения .warn (жёлтый, «у вас») и от .error (красный). */
+.conflict {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-left: 4px solid #6b7280;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.free-starts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.free-starts .chip {
+  flex-direction: row;
+  padding: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+
 .empty-state {
   background: #fff;
   border: 1px dashed var(--border);
