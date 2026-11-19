@@ -171,16 +171,22 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // --- Часовой пояс Организатора (ADR-0004) ---
 
+// defaultZone — имя fallback-зоны, когда профиля Организатора нет:
+// детерминированный UTC, а не локаль процесса. Единственное место,
+// где Go-литерал «UTC» задан; SQL COALESCE(..., 'UTC') в meetingCols —
+// тот же UTC на чтении Встреч.
+const defaultZone = "UTC"
+
 // zoneNameVia — IANA-имя зоны из профиля Организатора; без профиля — «UTC».
 // Все вычисления времени (календарные дни, Окно доступности, вердикт
 // «уже прошло») идут в этой зоне, а не в локации процесса.
 func zoneNameVia(e execer, ownerEmail string) string {
 	if ownerEmail == "" {
-		return "UTC"
+		return defaultZone
 	}
 	var tz string
 	if err := e.QueryRow(`SELECT timezone FROM organizers WHERE email = ?`, ownerEmail).Scan(&tz); err != nil {
-		return "UTC"
+		return defaultZone
 	}
 	return tz
 }

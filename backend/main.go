@@ -250,8 +250,8 @@ func (srv *server) handleBookings(w http.ResponseWriter, r *http.Request) {
 	views := []bookingView{}
 	for _, b := range srv.store.BookingsByUser(email) {
 		// Встреча может быть уже без различимого профиля — зону даёт
-		// SQL-джойн с COALESCE 'UTC'; нет и Встречи — тот же UTC-фолбэк.
-		view := bookingView{Booking: b, Past: srv.store.IsPast(b), MeetingState: MeetingActive, Timezone: "UTC"}
+		// SQL-джойн с COALESCE 'UTC'; нет и Встречи — тот же defaultZone.
+		view := bookingView{Booking: b, Past: srv.store.IsPast(b), MeetingState: MeetingActive, Timezone: defaultZone}
 		if m, ok := srv.store.Meeting(b.MeetingID); ok {
 			view.MeetingName = m.Name
 			view.MeetingOwnerName = m.OwnerName
