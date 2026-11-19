@@ -109,6 +109,25 @@
         }
       }
     },
+    "/api/health": {
+      "get": {
+        "operationId": "HealthApi_health",
+        "description": "Ливенс-проб: 200 { status: ok }",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/meetings": {
       "get": {
         "operationId": "MeetingsApi_list",
@@ -793,6 +812,17 @@
           }
         },
         "description": "Тело ошибки API"
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
       },
       "Meeting": {
         "type": "object",

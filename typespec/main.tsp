@@ -301,3 +301,19 @@ interface BookingsApi {
     | ApiError<409>
     | ApiError<422>;
 }
+
+// --- /api/health: health check для оркестраторов и хостинга (Docker/Render) ---
+
+model HealthResponse {
+  status: string;
+}
+
+@route("/api/health")
+interface HealthApi {
+  @get
+  @doc("Ливенс-проб: 200 { status: ok }")
+  health(): {
+    @statusCode code: 200;
+    @body body: HealthResponse;
+  };
+}
