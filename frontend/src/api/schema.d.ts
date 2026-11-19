@@ -621,7 +621,7 @@ export interface operations {
         parameters: {
             query: {
                 duration: number;
-                /** @description Шаг стартов: целый 1..duration, иначе 400 */
+                /** @description Шаг стартов: целый; нечисловое значение — 400, вне диапазона 1..duration — 422 (как при создании) */
                 step?: number;
                 owner?: string;
                 /** @description IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC */
@@ -651,6 +651,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Client error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
         };
     };
     PreviewApi_slots: {
@@ -659,7 +668,7 @@ export interface operations {
                 owner?: string;
                 date: string;
                 duration: number;
-                /** @description Шаг стартов: целый 1..duration, иначе 400 */
+                /** @description Шаг стартов: целый; нечисловое значение — 400, вне диапазона 1..duration — 422 (как при создании) */
                 step?: number;
                 /** @description IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC */
                 timezone?: string;
@@ -681,6 +690,15 @@ export interface operations {
             };
             /** @description The server could not understand the request due to invalid syntax. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Client error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

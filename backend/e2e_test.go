@@ -2,8 +2,9 @@ package main
 
 // HTTP e2e (ADR-0005): реальный роутер поверх httptest.Server и настоящая
 // SQLite во временном каталоге. Покрывает ровно то, что не выражается на
-// Store-шовне: полный happy-цикл через HTTP JSON и параллельную гонку
-// бронирования (контрактная гарантия «ровно одна Запись succeeds»).
+// Store-шовне: полный happy-цикл через HTTP JSON, параллельную гонку
+// бронирования (контрактная гарантия «ровно одна Запись succeeds») и
+// конвенцию HTTP-кодов для шага превью (400 — синтаксис, 422 — домен).
 
 import (
 	"bytes"
@@ -251,4 +252,33 @@ func TestE2E_BookingRace(t *testing.T) {
 			t.Errorf("повтор %d, интервал %s: коды %v, хотим ровно один 201 и один 409", i, start, codes)
 		}
 	}
+}
+
+// TestE2E_PreviewStepCodes — единая конвенция кодов для шага: нечисловой
+// step — 400 (синтаксис query), значение вне 1..duration — 422
+// ErrStartStepRange (доменное правило, как при создании встречи).
+func TestE2E_PreviewStepCodes(t *testing.T) {
+	srv := e2eServer(t)
+	path := "/api/preview/slots?date=" + e2eTomorrow() + "&duration=60&step="
+	for _, c := range []struct {
+		step string
+		want int
+	}{
+		{"30", http.StatusOK},                  // валидный шаг
+		{"abc", http.StatusBadRequest},         // не число — синтаксис query
+		{"0", http.StatusUnprocessableEntity},  // вне 1..duration — домен
+		{"90", http.StatusUnprocessableEntity}, // больше длительности — домен
+	} {
+		code, _, err := e2eRequest(srv, http.MethodGet, path+c.step, nil)
+		if err != nil {
+			t.Fatalf("step=%q: %v", c.step, err)
+		}
+		e2eWantCode(t, "GET preview slots step="+c.step, code, c.want)
+	}
+	// То же правило действует и для окна доступности.
+	code, _, err := e2eRequest(srv, http.MethodGet, "/api/preview/availability?duration=60&step=90", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2eWantCode(t, "GET preview availability step=90", code, http.StatusUnprocessableEntity)
 }

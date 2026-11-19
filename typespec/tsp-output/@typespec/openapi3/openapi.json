@@ -385,7 +385,7 @@
             "name": "step",
             "in": "query",
             "required": false,
-            "description": "Шаг стартов: целый 1..duration, иначе 400",
+            "description": "Шаг стартов: целый; нечисловое значение — 400, вне диапазона 1..duration — 422 (как при создании)",
             "schema": {
               "type": "integer",
               "format": "int32"
@@ -435,6 +435,16 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -477,7 +487,7 @@
             "name": "step",
             "in": "query",
             "required": false,
-            "description": "Шаг стартов: целый 1..duration, иначе 400",
+            "description": "Шаг стартов: целый; нечисловое значение — 400, вне диапазона 1..duration — 422 (как при создании)",
             "schema": {
               "type": "integer",
               "format": "int32"
@@ -511,6 +521,16 @@
           },
           "400": {
             "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Client error",
             "content": {
               "application/json": {
                 "schema": {

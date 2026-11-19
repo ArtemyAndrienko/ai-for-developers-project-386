@@ -190,11 +190,13 @@ func (srv *server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// /api/preview/availability?duration=30&step=15&owner=... и
-// /api/preview/slots?date=&duration=30&step=15&owner=... — превью сетки для ещё
-// не созданной встречи (Сценарий 1: организатор видит доступные интервалы,
-// конкретный интервал он не выбирает). Шаг стартов необязателен: без него или
-// с step<=0 старты идут через длительность.
+// /api/preview/availability?duration=30&step=15&owner=...&timezone=... и
+// /api/preview/slots?date=&duration=30&step=15&owner=...&timezone=... — превью
+// сетки для ещё не созданной встречи (Сценарий 1: организатор видит доступные
+// интервалы, конкретный интервал он не выбирает). Шаг стартов необязателен:
+// без него старты идут через длительность. Конвенция кодов как при создании:
+// нечисловой step — 400 (синтаксис query), значение вне 1..duration —
+// 422 ErrStartStepRange (доменное правило).
 func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	dur, err := strconv.Atoi(q.Get("duration"))
@@ -205,8 +207,12 @@ func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	step := 0
 	if raw := q.Get("step"); raw != "" {
 		step, err = strconv.Atoi(raw)
-		if err != nil || step < 1 || step > dur {
-			writeErr(w, http.StatusBadRequest, errors.New("некорректный параметр step: ожидается 1..duration"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, errors.New("некорректный параметр step: ожидается целое число"))
+			return
+		}
+		if step < 1 || step > dur {
+			writeErr(w, http.StatusUnprocessableEntity, ErrStartStepRange)
 			return
 		}
 	}

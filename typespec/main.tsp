@@ -252,10 +252,17 @@ interface PreviewApi {
   @doc("Окно доступности на 14 дней для создаваемой встречи; шаг стартов необязателен (без него = длительность)")
   availability(
     @query duration: int32,
-    @query @doc("Шаг стартов: целый 1..duration, иначе 400") step?: int32,
+
+    @query
+    @doc("Шаг стартов: целый; нечисловое значение — 400, вне диапазона 1..duration — 422 (как при создании)")
+    step?: int32,
+
     @query owner?: string,
-    @query @doc("IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC") timezone?: string,
-  ): DayAvailability[] | ApiError<400>;
+
+    @query
+    @doc("IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC")
+    timezone?: string,
+  ): DayAvailability[] | ApiError<400> | ApiError<422>;
 
   @route("/slots")
   @get
@@ -264,9 +271,15 @@ interface PreviewApi {
     @query owner?: string,
     @query date: plainDate,
     @query duration: int32,
-    @query @doc("Шаг стартов: целый 1..duration, иначе 400") step?: int32,
-    @query @doc("IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC") timezone?: string,
-  ): Slot[] | ApiError<400>;
+
+    @query
+    @doc("Шаг стартов: целый; нечисловое значение — 400, вне диапазона 1..duration — 422 (как при создании)")
+    step?: int32,
+
+    @query
+    @doc("IANA-зона-фолбэк для расчёта до первого сохранения: переданная > сохранённый профиль > UTC")
+    timezone?: string,
+  ): Slot[] | ApiError<400> | ApiError<422>;
 }
 
 // --- /api/bookings: «Мои записи» посетителя ---
