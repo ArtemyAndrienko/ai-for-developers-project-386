@@ -79,6 +79,17 @@ func e2eWantCode(t *testing.T, what string, got, want int) {
 	}
 }
 
+// hasStart — присутствует ли данный старт в списке сетки (без суждений о
+// её составе и статусах — это вотчина Store-тестов, ADR-0005).
+func hasStart(slots []Slot, start string) bool {
+	for _, sl := range slots {
+		if sl.Start == start {
+			return true
+		}
+	}
+	return false
+}
+
 // e2eTomorrow — «завтра» по дате сервера: тест и сервер — один процесс,
 // time.Now общий; день в будущем — ни один интервал не «прошедший».
 func e2eTomorrow() string {
@@ -94,8 +105,11 @@ type e2eBookingView struct {
 }
 
 // TestE2E_HappyCycle — полный цикл посетителя через HTTP JSON:
-// границы дня + встреча (201) → список → слоты → бронь (201) →
-// bookings?email видит запись → отмена (204) → интервал снова free.
+// границы дня + встреча (201) → список → слоты → запись (201) →
+// bookings?email видит запись → отмена (204) → запись создаётся заново (201).
+// По ADR-0005 здесь проверяются коды ответов и присутствие запрошенного
+// старта в списке; состав и статусы сетки — это Store-матрица, она покрыта
+// тестами на Store-шовне и в e2e не дублируется.
 func TestE2E_HappyCycle(t *testing.T) {
 	srv := e2eServer(t)
 	date := e2eTomorrow()
@@ -136,15 +150,12 @@ func TestE2E_HappyCycle(t *testing.T) {
 		t.Fatalf("встреча %s не видна в GET /api/meetings (%d шт.)", meeting.ID, len(meetings))
 	}
 
+	const first = "09:00" // старт из сохранённых через API границ 09:00–12:00
 	var slots []Slot
 	code = e2eDo(t, srv, http.MethodGet, "/api/meetings/"+meeting.ID+"/slots", nil, &slots)
 	e2eWantCode(t, "GET slots", code, http.StatusOK)
-	if len(slots) != 6 { // 09:00–12:00 по 30 минут
-		t.Fatalf("сетка дня: %d интервалов, хотим 6", len(slots))
-	}
-	first := slots[0].Start
-	if slots[0].Status != SlotFree {
-		t.Fatalf("первый интервал %s: статус %q, хотим free", first, slots[0].Status)
+	if !hasStart(slots, first) {
+		t.Fatalf("запрошенный старт %s отсутствует в списке сетки: %+v", first, slots)
 	}
 
 	var booking Booking
@@ -165,11 +176,11 @@ func TestE2E_HappyCycle(t *testing.T) {
 	code = e2eDo(t, srv, http.MethodDelete, "/api/bookings/"+booking.ID+"?email=ivan@example.com", nil, nil)
 	e2eWantCode(t, "DELETE booking", code, http.StatusNoContent)
 
-	code = e2eDo(t, srv, http.MethodGet, "/api/meetings/"+meeting.ID+"/slots", nil, &slots)
-	e2eWantCode(t, "GET slots после отмены", code, http.StatusOK)
-	if slots[0].Start != first || slots[0].Status != SlotFree {
-		t.Fatalf("интервал %s после отмены: %+v, снова ждём free", first, slots[0])
-	}
+	// После DELETE запись можно создать заново: освобождение интервала
+	// выражаем кодом 201, а не пересчётом статусов сетки (ADR-0005).
+	code = e2eDo(t, srv, http.MethodPost, "/api/meetings/"+meeting.ID+"/book",
+		map[string]string{"start": first, "name": "Иван", "email": "ivan@example.com"}, nil)
+	e2eWantCode(t, "POST book после DELETE", code, http.StatusCreated)
 }
 
 // TestE2E_BookingRace — контрактная гарантия: два одновременных POST book
