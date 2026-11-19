@@ -24,7 +24,6 @@ const (
 	SlotFree  SlotStatus = "free"  // свободен
 	SlotTaken SlotStatus = "taken" // занят (в т.ч. другой встречей того же организатора)
 	SlotPast  SlotStatus = "past"  // время начала уже прошло
-	SlotTail  SlotStatus = "tail"  // остаток дня короче продолжительности (серый)
 )
 
 type Slot struct {
@@ -60,27 +59,30 @@ func FormatHM(min int) string {
 	return fmt.Sprintf("%02d:%02d", min/60, min%60)
 }
 
-// GenerateSlots разбивает рабочий день на интервалы заданной продолжительности
-// от startHM до endHM с шагом durationMin. Остаток дня короче продолжительности
-// возвращается последним интервалом со статусом SlotTail (виден, но не выбирается).
+// GenerateSlots разбивает рабочий день на интервалы длительностью durationMin:
+// старты идут от startHM с шагом stepMin (stepMin <= 0 — шаг равен длительности),
+// предлагаются только старты, у которых полная длительность вписывается в день
+// (ADR-0003: «Хвостовой интервал» упразднён, остаток дня не рисуется).
 // busy — занятые отрезки: интервал помечается SlotTaken при любом пересечении,
-// поэтому занятость организатора из другой встречи (с другим шагом сетки) тоже
-// попадает в сетку корректно.
-func GenerateSlots(startHM, endHM string, durationMin, nowMin int, busy []Interval) []Slot {
+// поэтому одна бронь блокирует все пересекающиеся старты плотной сетки,
+// в т.ч. из другой встречи (с другим шагом) того же организатора.
+func GenerateSlots(startHM, endHM string, durationMin, stepMin, nowMin int, busy []Interval) []Slot {
 	start, ok1 := ParseHM(startHM)
 	end, ok2 := ParseHM(endHM)
 	if !ok1 || !ok2 || durationMin <= 0 || end <= start {
 		return nil
 	}
-	slots := make([]Slot, 0, (end-start)/durationMin+1)
-	for m := start; m < end; m += durationMin {
-		e := min(m+durationMin, end)
+	step := stepMin
+	if step <= 0 {
+		step = durationMin
+	}
+	slots := make([]Slot, 0, (end-start)/step+1)
+	for m := start; m+durationMin <= end; m += step {
+		e := m + durationMin
 		s := Slot{Start: FormatHM(m), End: FormatHM(e)}
 		switch {
-		case m+durationMin > end:
-			s.Status = SlotTail // остаток короче продолжительности
 		case overlapsAny(m, e, busy):
-			s.Status = SlotTaken
+			s.Status = SlotTaken // занятость приоритетнее «прошло»
 		case m <= nowMin:
 			s.Status = SlotPast // начало совпадает с "сейчас" или раньше — уже нельзя
 		default:

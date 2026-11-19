@@ -369,12 +369,23 @@
     "/api/preview/availability": {
       "get": {
         "operationId": "PreviewApi_availability",
-        "description": "Окно доступности на 14 дней для создаваемой встречи",
+        "description": "Окно доступности на 14 дней для создаваемой встречи; шаг стартов необязателен (без него = длительность)",
         "parameters": [
           {
             "name": "duration",
             "in": "query",
             "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "explode": false
+          },
+          {
+            "name": "step",
+            "in": "query",
+            "required": false,
+            "description": "Шаг стартов: целый 1..duration, иначе 400",
             "schema": {
               "type": "integer",
               "format": "int32"
@@ -421,7 +432,7 @@
     "/api/preview/slots": {
       "get": {
         "operationId": "PreviewApi_slots",
-        "description": "Сетка интервалов конкретного дня для создаваемой встречи",
+        "description": "Сетка интервалов конкретного дня для создаваемой встречи; шаг стартов необязателен (без него = длительность)",
         "parameters": [
           {
             "name": "owner",
@@ -446,6 +457,17 @@
             "name": "duration",
             "in": "query",
             "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "explode": false
+          },
+          {
+            "name": "step",
+            "in": "query",
+            "required": false,
+            "description": "Шаг стартов: целый 1..duration, иначе 400",
             "schema": {
               "type": "integer",
               "format": "int32"
@@ -756,6 +778,11 @@
             "format": "int32",
             "description": "Длительность интервала в минутах"
           },
+          "startStepMin": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Шаг стартов сетки в минутах; отсутствие = длительность Встречи (ADR-0003)"
+          },
           "ownerEmail": {
             "type": "string",
             "description": "Email организатора: по нему проверяется занятость во всех его встречах"
@@ -815,6 +842,11 @@
             "type": "integer",
             "format": "int32"
           },
+          "startStepMin": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Шаг стартов: целый 1..durationMin; отсутствие = длительность (422 при выходе за диапазон)"
+          },
           "ownerEmail": {
             "type": "string"
           },
@@ -859,8 +891,7 @@
         "enum": [
           "free",
           "taken",
-          "past",
-          "tail"
+          "past"
         ]
       },
       "WorkHours": {

@@ -26,6 +26,7 @@ interface CreateState {
   ownerName: string;
   timezone: string;
   duration: number;
+  step: number | null; // Шаг стартов; null — «как длительность» (ADR-0003)
   date: string | null; // день, на который назначается встреча
   weekOffset: number;
   availability: DayAvailability[];
@@ -48,6 +49,13 @@ function browserTimezone(): string {
   }
 }
 
+// Пресеты шага стартов — только UI-подсказки (ADR-0002 для шага — то же
+// правило); сервер валидирует целый 1..длительности.
+const STEP_PRESETS = [15, 30, 45, 60, 90];
+
+// Доступные пресеты шага: не больше выбранной длительности.
+const stepPresetsFor = (duration: number) => STEP_PRESETS.filter((s) => s <= duration);
+
 export async function renderCreate(app: HTMLElement): Promise<void> {
   const state: CreateState = {
     name: "",
@@ -56,6 +64,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
     ownerName: localStorage.getItem(OWNER_NAME_KEY) ?? "",
     timezone: browserTimezone(),
     duration: 30,
+    step: null,
     date: null,
     weekOffset: 0,
     availability: [],
@@ -66,7 +75,6 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
 
   state.meetings = await api.meetings(state.owner || undefined);
   state.availability = await api.previewAvailability(state.duration, state.owner);
-
   // Каркас рисуется один раз; дальше обновляем только контейнеры превью
   // (#cal, #slots, #hours) — поля формы не пересоздаются (Сценарий 1:
   // сохранение границ дня не должно «перезагружать» страницу создания).
@@ -88,6 +96,15 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
               (d) => `<option value="${d}"${d === state.duration ? " selected" : ""}>${d} мин</option>`,
             ).join("")}
           </select>
+        </label>
+        <label>Шаг стартов
+          <select id="step">
+            <option value="">как длительность</option>
+            ${stepPresetsFor(state.duration).map(
+              (s) => `<option value="${s}"${s === state.step ? " selected" : ""}>${s} мин</option>`,
+            ).join("")}
+          </select>
+          <small class="muted">расстояние между доступными началами; старты предлагаются, пока полная длительность влезает в день</small>
         </label>
         <div id="hours"></div>
         <button class="btn primary block" id="save" disabled>Сохранить встречу</button>
@@ -113,6 +130,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
   const ownerNameInput = $<HTMLInputElement>("#owner-name");
   const tzInput = $<HTMLInputElement>("#tz");
   const durSelect = $<HTMLSelectElement>("#dur");
+  const stepSelect = $<HTMLSelectElement>("#step");
   const saveBtn = $<HTMLButtonElement>("#save");
   const calEl = $<HTMLDivElement>("#cal");
   const slotsEl = $<HTMLDivElement>("#slots");
@@ -135,8 +153,9 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
       slotsEl.innerHTML = `<div class="hint">Выберите дату встречи в календаре.</div>`;
       return;
     }
+    const stepText = state.step === null ? `${state.duration} мин (как длительность)` : `${state.step} мин`;
     slotsEl.innerHTML = `
-      <p class="muted">${ruLongDate(state.date)} · шаг ${state.duration} мин</p>
+      <p class="muted">${ruLongDate(state.date)} · шаг стартов ${stepText}</p>
       <ul class="slots preview">
         ${state.slots
           .map(
@@ -213,8 +232,9 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
   };
 
   const refreshPreview = async () => {
-    state.availability = await api.previewAvailability(state.duration, state.owner);
-    state.slots = state.date ? await api.previewSlots(state.owner, state.date, state.duration) : [];
+    const step = state.step ?? undefined;
+    state.availability = await api.previewAvailability(state.duration, state.owner, step);
+    state.slots = state.date ? await api.previewSlots(state.owner, state.date, state.duration, step) : [];
     renderCal();
     renderSlots();
   };
@@ -277,6 +297,19 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
   });
   durSelect.addEventListener("change", async () => {
     state.duration = Number(durSelect.value);
+    // Шаг не может быть больше длительности: устаревший выбор сбрасываем
+    // в «как длительность» и перестраиваем пресеты.
+    if (state.step !== null && state.step > state.duration) {
+      state.step = null;
+    }
+    stepSelect.innerHTML = `<option value="">как длительность</option>${stepPresetsFor(state.duration)
+      .map((s) => `<option value="${s}"${s === state.step ? " selected" : ""}>${s} мин</option>`)
+      .join("")}`;
+    stepSelect.value = state.step === null ? "" : String(state.step);
+    await refreshPreview();
+  });
+  stepSelect.addEventListener("change", async () => {
+    state.step = stepSelect.value === "" ? null : Number(stepSelect.value);
     await refreshPreview();
   });
 
@@ -287,6 +320,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
         name: state.name.trim(),
         description: state.description.trim(),
         durationMin: state.duration,
+        startStepMin: state.step ?? undefined,
         ownerEmail: state.owner.trim(),
         ownerName: state.ownerName.trim(),
         date: state.date,

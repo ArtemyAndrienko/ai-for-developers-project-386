@@ -44,7 +44,6 @@ const slotLabels: Record<string, string> = {
   free: "Свободно",
   taken: "Занято",
   past: "Прошло",
-  tail: "Мало времени",
 };
 
 export function slotLabel(status: string): string {

@@ -18,6 +18,8 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+func intPtr(v int) *int { return &v }
+
 func mustMeeting(t *testing.T, s *Store, name string, dur int, owner, date string) *Meeting {
 	t.Helper()
 	return mustMeetingTZ(t, s, name, dur, owner, date, "")
@@ -25,7 +27,7 @@ func mustMeeting(t *testing.T, s *Store, name string, dur int, owner, date strin
 
 func mustMeetingTZ(t *testing.T, s *Store, name string, dur int, owner, date, timezone string) *Meeting {
 	t.Helper()
-	m, err := s.CreateMeeting(name, "", dur, owner, "", date, timezone)
+	m, err := s.CreateMeeting(name, "", dur, nil, owner, "", date, timezone)
 	if err != nil {
 		t.Fatalf("CreateMeeting(%q): %v", name, err)
 	}
@@ -169,7 +171,7 @@ func TestPreviewSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	slots := s.PreviewSlots("boss@x.io", "2026-11-17", 60)
+	slots := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 0)
 	found := false
 	for _, sl := range slots {
 		if sl.Start == "10:00" {
@@ -184,7 +186,7 @@ func TestPreviewSlots(t *testing.T) {
 	}
 
 	// Без owner превью не учитывает чужие брони.
-	for _, sl := range s.PreviewSlots("", "2026-11-17", 60) {
+	for _, sl := range s.PreviewSlots("", "2026-11-17", 60, 0) {
 		if sl.Start == "10:00" && sl.Status != SlotFree {
 			t.Error("без email организатора превью не должно показывать занятость")
 		}
@@ -194,7 +196,7 @@ func TestPreviewSlots(t *testing.T) {
 	if err := s.SetWorkHours("boss@x.io", "2026-11-19", "14:00", "18:00"); err != nil {
 		t.Fatal(err)
 	}
-	pv := s.PreviewSlots("boss@x.io", "2026-11-19", 30)
+	pv := s.PreviewSlots("boss@x.io", "2026-11-19", 30, 0)
 	if pv[0].Start != "14:00" {
 		t.Errorf("превью должно использовать границы 14:00–18:00, первый интервал %s", pv[0].Start)
 	}
@@ -218,7 +220,7 @@ func TestCreateMeeting_Validation(t *testing.T) {
 		{"кривая дата", "x", "boss@x.io", 30, "17.11.2026", ErrDateRequired},
 	}
 	for _, c := range cases {
-		_, err := s.CreateMeeting(c.mname, "", c.dur, c.own, "", c.date, "")
+		_, err := s.CreateMeeting(c.mname, "", c.dur, nil, c.own, "", c.date, "")
 		if err == nil {
 			t.Errorf("%s: ошибки нет", c.name)
 		}
@@ -246,7 +248,7 @@ func TestMeetingsFilterByOwner(t *testing.T) {
 // отображается посетителю в «Мои записи».
 func TestMeetingOrganizerName(t *testing.T) {
 	s := newTestStore(t)
-	m, err := s.CreateMeeting("Разбор", "", 30, "boss@x.io", "Иван Босс", "2026-11-17", "")
+	m, err := s.CreateMeeting("Разбор", "", 30, nil, "boss@x.io", "Иван Босс", "2026-11-17", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +256,7 @@ func TestMeetingOrganizerName(t *testing.T) {
 		t.Errorf("имя организатора не сохранилось: %+v", m)
 	}
 	// Без имени — пустая строка допустима.
-	m2, err := s.CreateMeeting("Аноним", "", 30, "boss@x.io", "", "2026-11-18", "")
+	m2, err := s.CreateMeeting("Аноним", "", 30, nil, "boss@x.io", "", "2026-11-18", "")
 	if err != nil || m2.OwnerName != "" {
 		t.Errorf("имя организатора опционально: %+v %v", m2, err)
 	}
@@ -262,7 +264,7 @@ func TestMeetingOrganizerName(t *testing.T) {
 
 func TestPreviewAndDeleteMeeting(t *testing.T) {
 	s := newTestStore(t)
-	avail := s.PreviewAvailability(30, "")
+	avail := s.PreviewAvailability(30, 0, "")
 	if len(avail) != windowDays || avail[0].Date != "2026-11-16" || avail[13].Date != "2026-11-29" {
 		t.Fatalf("окно превью: %+v", avail)
 	}
@@ -363,7 +365,7 @@ func TestCancelBooking_PersistsAcrossReopen(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 4 {
+	if migrations != 5 {
 		t.Errorf("миграции должны примениться по одному разу, посчитано %d", migrations)
 	}
 }
@@ -446,20 +448,172 @@ func TestCancelMeeting_Idempotent(t *testing.T) {
 	}
 }
 
-// Хвостовой остаток на день встречи нельзя забронировать.
-func TestBook_TailSlotRejected(t *testing.T) {
+// «Хвостовой интервал» упразднён и на Store-шовне: день 09:00–17:50 с
+// длительностью 45 даёт 11 целых стартов (последний 16:30–17:15), остаток
+// 17:15–17:50 в сетке отсутствует, а бронь не-старта 17:15 отклоняется как
+// интервал вне сетки.
+func TestBook_TailNeverAppears(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.SetWorkHours("boss@x.io", "2026-11-17", "09:00", "17:50"); err != nil {
 		t.Fatal(err)
 	}
 	m := mustMeeting(t, s, "Долгий созвон", 45, "boss@x.io", "2026-11-17")
 	slots, _ := s.DaySlots(m.ID)
-	tail := slots[len(slots)-1]
-	if tail.Status != SlotTail {
-		t.Fatalf("последний интервал должен быть серым: %v", tail)
+	if len(slots) != 11 {
+		t.Fatalf("ожидалось 11 целых интервалов, получено %d", len(slots))
 	}
-	if _, err := s.Book(m.ID, tail.Start, "Иван", "ivan@example.com"); !errors.Is(err, ErrSlotUnavailable) {
-		t.Errorf("бронь хвостового интервала: %v", err)
+	last := slots[len(slots)-1]
+	if last.Start != "16:30" || last.End != "17:15" || last.Status != SlotFree {
+		t.Errorf("последний интервал должен быть целым и свободным: %v", last)
+	}
+	if _, err := s.Book(m.ID, "17:15", "Иван", "ivan@example.com"); !errors.Is(err, ErrSlotUnavailable) {
+		t.Errorf("бронь не влезающего старта: %v, хотим ErrSlotUnavailable", err)
+	}
+}
+
+// Плотная сетка 60/30 (ADR-0003): одна Запись блокирует ВСЕ пересекающиеся
+// старты — бронь 10:00–11:00 занимает старты 09:30, 10:00 и 10:30,
+// а касающиеся границей 09:00 и 11:00 остаются свободны.
+func TestDenseGrid_BookingBlocksAllOverlappingStarts(t *testing.T) {
+	s := newTestStore(t)
+	m, err := s.CreateMeeting("Часовой созвон", "", 60, intPtr(30), "boss@x.io", "", "2026-11-17", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.StartStepMin == nil || *m.StartStepMin != 30 {
+		t.Fatalf("шаг не сохранился: %+v", m)
+	}
+	if status := freeStarts(t, s, m.ID); len(status) != 17 {
+		t.Errorf("сетка 60/30 на 09:00–18:00: ожидалось 17 стартов, получено %d", len(status))
+	}
+
+	if _, err := s.Book(m.ID, "10:00", "Иван", "ivan@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	statuses := freeStarts(t, s, m.ID)
+	for _, start := range []string{"09:30", "10:00", "10:30"} {
+		if statuses[start] != SlotTaken {
+			t.Errorf("старт %s пересекается с бронью 10:00–11:00 и должен быть занят: %s", start, statuses[start])
+		}
+	}
+	for _, start := range []string{"09:00", "11:00"} {
+		if statuses[start] != SlotFree {
+			t.Errorf("старт %s лишь касается брони и должен быть свободен: %s", start, statuses[start])
+		}
+	}
+	// Повторная запись на пересекающийся старт отклоняется как занятая.
+	if _, err := s.Book(m.ID, "10:30", "Оля", "olya@example.com"); !errors.Is(err, ErrSlotTaken) {
+		t.Errorf("бронь пересекающегося старта плотной сетки: %v, хотим ErrSlotTaken", err)
+	}
+}
+
+// Шаг по умолчанию: не задан (= NULL) — сетка как раньше, старт = длительность.
+func TestCreateMeeting_StartStepDefaultsToDuration(t *testing.T) {
+	s := newTestStore(t)
+	m, err := s.CreateMeeting("Обычный", "", 60, nil, "boss@x.io", "", "2026-11-17", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.StartStepMin != nil {
+		t.Errorf("без шага ждём nil, получили %v", *m.StartStepMin)
+	}
+	if status := freeStarts(t, s, m.ID); len(status) != 9 { // 09:00…17:00 с шагом 60
+		t.Errorf("шаг = длительность: ожидалось 9 интервалов, получено %d", len(status))
+	}
+}
+
+// Серверная валидация (store-шовен): шаг — целый 1..длительности включительно.
+func TestCreateMeeting_StartStepValidation(t *testing.T) {
+	s := newTestStore(t)
+	for _, step := range []int{0, -5, 61, 120} {
+		if _, err := s.CreateMeeting("x", "", 60, intPtr(step), "boss@x.io", "", "2026-11-17", ""); !errors.Is(err, ErrStartStepRange) {
+			t.Errorf("шаг %d при длительности 60: %v, хотим ErrStartStepRange", step, err)
+		}
+	}
+	for _, step := range []int{1, 15, 60} {
+		if _, err := s.CreateMeeting("x", "", 60, intPtr(step), "boss@x.io", "", "2026-11-17", ""); err != nil {
+			t.Errorf("шаг %d при длительности 60 должен приниматься: %v", step, err)
+		}
+	}
+}
+
+// Шаг переживает перезакрытие базы: значение и NULL (дефолт) читаются из файла.
+func TestStartStep_PersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calendar.db")
+	fixed := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.Local) }
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = fixed
+	stepMeeting, err := s.CreateMeeting("Плотный", "", 60, intPtr(30), "boss@x.io", "", "2026-11-17", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainMeeting := mustMeeting(t, s, "Простой", 60, "boss@x.io", "2026-11-18")
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	s2.now = fixed
+
+	m1, ok := s2.Meeting(stepMeeting.ID)
+	if !ok || m1.StartStepMin == nil || *m1.StartStepMin != 30 {
+		t.Errorf("шаг 30 должен пережить рестарт: %+v ok=%v", m1, ok)
+	}
+	if status := freeStarts(t, s2, m1.ID); len(status) != 17 {
+		t.Errorf("после рестарта сетка плотная: ожидалось 17 стартов, получено %d", len(status))
+	}
+	m2, ok := s2.Meeting(plainMeeting.ID)
+	if !ok || m2.StartStepMin != nil {
+		t.Errorf("встреча без шага: ждём nil, получили %+v", m2)
+	}
+}
+
+// Превью создаваемой встречи понимает шаг: 60/30 — старты каждые 30 минут.
+func TestPreviewSlots_StartStep(t *testing.T) {
+	s := newTestStore(t)
+	plain := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 0)
+	if len(plain) != 9 {
+		t.Errorf("без шага (0 = длительность): ожидалось 9 интервалов, получено %d", len(plain))
+	}
+	dense := s.PreviewSlots("boss@x.io", "2026-11-17", 60, 30)
+	if len(dense) != 17 {
+		t.Fatalf("шаг 30: ожидалось 17 интервалов, получено %d", len(dense))
+	}
+	if dense[1].Start != "09:30" || dense[1].End != "10:30" {
+		t.Errorf("второй старт плотной сетки %v", dense[1])
+	}
+	if last := dense[len(dense)-1]; last.Start != "17:00" || last.End != "18:00" {
+		t.Errorf("последний старт плотной сетки %v", last)
+	}
+
+	// Занятость организатора просвечивает и в плотное превью.
+	m, err := s.CreateMeeting("Часовой созвон", "", 60, intPtr(30), "boss@x.io", "", "2026-11-17", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Book(m.ID, "10:00", "Иван", "ivan@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	taken := map[string]SlotStatus{}
+	for _, sl := range s.PreviewSlots("boss@x.io", "2026-11-17", 60, 30) {
+		taken[sl.Start] = sl.Status
+	}
+	if taken["10:00"] != SlotTaken || taken["10:30"] != SlotTaken {
+		t.Errorf("превью с шагом должно показывать занятость пересекающихся стартов: %v", taken)
+	}
+
+	// Окно доступности тоже считается по шагу.
+	avail := s.PreviewAvailability(60, 30, "")
+	if len(avail) != windowDays || avail[1].Free != 17 {
+		t.Errorf("плотное окно: %+v", avail)
 	}
 }
 
@@ -689,10 +843,10 @@ func TestOrganizerTimezone_ProfileUpsertAndRead(t *testing.T) {
 	}
 
 	// Некорректная IANA-зона отклоняется и не портит профиль.
-	if _, err := s.CreateMeeting("Кривая зона", "", 30, "boss@x.io", "", "2026-11-17", "Mars/Olympus"); err == nil {
+	if _, err := s.CreateMeeting("Кривая зона", "", 30, nil, "boss@x.io", "", "2026-11-17", "Mars/Olympus"); err == nil {
 		t.Error("некорректная IANA-зона должна отклоняться")
 	}
-	if again, err := s.CreateMeeting("После отказа", "", 30, "boss@x.io", "", "2026-11-17", ""); err != nil || again.Timezone != "Europe/Berlin" {
+	if again, err := s.CreateMeeting("После отказа", "", 30, nil, "boss@x.io", "", "2026-11-17", ""); err != nil || again.Timezone != "Europe/Berlin" {
 		t.Errorf("отклонённое создание не меняет профиль: %+v %v", again, err)
 	}
 }
@@ -707,7 +861,7 @@ func TestOrganizerTimezone_SameInstantDifferentDay(t *testing.T) {
 	// Организатор из Колкаты: «сегодня» для него 17.11 — вчерашний 16.11 уже
 	// за окном, а сетка на 17.11 утренняя (05:30 по его часам).
 	kol := mustMeetingTZ(t, s, "Колката", 30, "kol@x.io", "2026-11-17", "Asia/Kolkata")
-	if _, err := s.CreateMeeting("Вчера по UTC", "", 30, "kol@x.io", "", "2026-11-16", ""); !errors.Is(err, ErrDateRequired) {
+	if _, err := s.CreateMeeting("Вчера по UTC", "", 30, nil, "kol@x.io", "", "2026-11-16", ""); !errors.Is(err, ErrDateRequired) {
 		t.Errorf("16.11 для Колкаты уже вчера: %v", err)
 	}
 	statuses := freeStarts(t, s, kol.ID)
@@ -719,7 +873,7 @@ func TestOrganizerTimezone_SameInstantDifferentDay(t *testing.T) {
 
 	// Без профиля — UTC: 16.11 ещё «сегодня», и к 23:30 день целиком прошёл.
 	utc := mustMeeting(t, s, "ЮТиЦ", 30, "plain@x.io", "2026-11-16")
-	if _, err := s.CreateMeeting("Сегодня в UTC", "", 30, "plain@x.io", "", "2026-11-16", ""); err != nil {
+	if _, err := s.CreateMeeting("Сегодня в UTC", "", 30, nil, "plain@x.io", "", "2026-11-16", ""); err != nil {
 		t.Errorf("16.11 в UTC ещё сегодня: %v", err)
 	}
 	for start, st := range freeStarts(t, s, utc.ID) {
@@ -729,8 +883,8 @@ func TestOrganizerTimezone_SameInstantDifferentDay(t *testing.T) {
 	}
 
 	// Окно доступности начинается с дня организатора.
-	availKol := s.PreviewAvailability(30, "kol@x.io")
-	availPlain := s.PreviewAvailability(30, "plain@x.io")
+	availKol := s.PreviewAvailability(30, 0, "kol@x.io")
+	availPlain := s.PreviewAvailability(30, 0, "plain@x.io")
 	if availKol[0].Date != "2026-11-17" || availKol[13].Date != "2026-11-30" {
 		t.Errorf("окно Колкаты должно быть 17.11–30.11: %+v … %+v", availKol[0], availKol[13])
 	}
@@ -923,7 +1077,7 @@ func TestPersistAcrossReopen(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT count(*) FROM schema_version`).Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 4 {
+	if migrations != 5 {
 		t.Errorf("миграция должна примениться один раз, посчитано %d", migrations)
 	}
 }

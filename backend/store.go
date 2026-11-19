@@ -50,16 +50,26 @@ type execer interface {
 
 // Meeting — Встреча, назначенная на конкретный день окна доступности.
 type Meeting struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	DurationMin int       `json:"durationMin"` // продолжительность Интервала
-	OwnerEmail  string    `json:"ownerEmail"`  // email организатора: по нему проверяется занятость
-	OwnerName   string    `json:"ownerName"`   // имя организатора, необязательное
-	Date        string    `json:"date"`        // "2006-01-02"
-	State       string    `json:"state"`       // "active" | "cancelled"
-	Timezone    string    `json:"timezone"`    // IANA-зона Организатора из профиля; без профиля — "UTC"
-	CreatedAt   time.Time `json:"createdAt"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	DurationMin  int       `json:"durationMin"`            // продолжительность Интервала
+	StartStepMin *int      `json:"startStepMin,omitempty"` // Шаг стартов; nil = длительность (ADR-0003)
+	OwnerEmail   string    `json:"ownerEmail"`             // email организатора: по нему проверяется занятость
+	OwnerName    string    `json:"ownerName"`              // имя организатора, необязательное
+	Date         string    `json:"date"`                   // "2006-01-02"
+	State        string    `json:"state"`                  // "active" | "cancelled"
+	Timezone     string    `json:"timezone"`               // IANA-зона Организатора из профиля; без профиля — "UTC"
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// startStep — Шаг стартов сетки: сохранённый, либо длительность, если не задан
+// (ADR-0003: NULL = длительность, существующие Встречи сохраняют ту же сетку).
+func (m *Meeting) startStep() int {
+	if m.StartStepMin != nil {
+		return *m.StartStepMin
+	}
+	return m.DurationMin
 }
 
 // Booking — Запись посетителя на Интервал Встречи.
@@ -106,12 +116,13 @@ var (
 	ErrBookingEmailMismatch = fmt.Errorf("отменить запись может только её посетитель: email не совпадает")
 	ErrBookingPast          = fmt.Errorf("запись уже завершилась — отменить её нельзя")
 	ErrMeetingCancelled     = fmt.Errorf("встреча отменена организатором")
+	ErrStartStepRange       = fmt.Errorf("шаг стартов должен быть целым от 1 до длительности включительно")
 )
 
 const (
 	// meetings + профиль Организатора: зона резолвится на чтении (ADR-0004),
 	// без профиля — «UTC» (детерминированный дефолт, не локаль процесса).
-	meetingCols       = `m.id, m.name, m.description, m.duration_min, m.owner_email, m.owner_name, m.date, m.state, m.created_at, COALESCE(o.timezone, 'UTC')`
+	meetingCols       = `m.id, m.name, m.description, m.duration_min, m.start_step_min, m.owner_email, m.owner_name, m.date, m.state, m.created_at, COALESCE(o.timezone, 'UTC')`
 	meetingFromClause = `FROM meetings m LEFT JOIN organizers o ON o.email = m.owner_email`
 	bookingCols       = `id, meeting_id, date, start, end, name, email, state, created_at`
 )
@@ -261,18 +272,24 @@ func meetingFrom(row rowScanner) (*Meeting, bool) {
 		id         int64
 		name, desc string
 		dur        int
+		step       sql.NullInt64
 		oe, on     string
 		date       string
 		state      string
 		created    string
 		tz         string
 	)
-	if err := row.Scan(&id, &name, &desc, &dur, &oe, &on, &date, &state, &created, &tz); err != nil {
+	if err := row.Scan(&id, &name, &desc, &dur, &step, &oe, &on, &date, &state, &created, &tz); err != nil {
 		return nil, false
 	}
 	t, _ := time.Parse(time.RFC3339Nano, created)
-	return &Meeting{ID: pubID("m", id), Name: name, Description: desc, DurationMin: dur,
-		OwnerEmail: oe, OwnerName: on, Date: date, State: state, Timezone: tz, CreatedAt: t}, true
+	m := &Meeting{ID: pubID("m", id), Name: name, Description: desc, DurationMin: dur,
+		OwnerEmail: oe, OwnerName: on, Date: date, State: state, Timezone: tz, CreatedAt: t}
+	if step.Valid {
+		sm := int(step.Int64)
+		m.StartStepMin = &sm
+	}
+	return m, true
 }
 
 func meetingByID(e execer, n int64) (*Meeting, bool) {
@@ -280,9 +297,11 @@ func meetingByID(e execer, n int64) (*Meeting, bool) {
 }
 
 // CreateMeeting создаёт Встречу, назначенную на конкретный день окна.
-// Непустой timezone — upsert профиля Организатора (пустой — профиль не
-// трогает); «сегодня» и Окно доступности валидируются по часам зоны (ADR-0004).
-func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEmail, ownerName, date, timezone string) (*Meeting, error) {
+// startStepMin == nil — Шаг стартов равен длительности (ADR-0003); иначе
+// принимаются только целые 1..durationMin. Непустой timezone — upsert профиля
+// Организатора (пустой — профиль не трогает); «сегодня» и Окно доступности
+// валидируются по часам зоны (ADR-0004).
+func (s *Store) CreateMeeting(name, description string, durationMin int, startStepMin *int, ownerEmail, ownerName, date, timezone string) (*Meeting, error) {
 	if name == "" {
 		return nil, fmt.Errorf("название обязательно")
 	}
@@ -292,6 +311,9 @@ func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEm
 	if durationMin <= 0 || durationMin > 24*60 {
 		return nil, fmt.Errorf("некорректная продолжительность: %d", durationMin)
 	}
+	if startStepMin != nil && (*startStepMin < 1 || *startStepMin > durationMin) {
+		return nil, ErrStartStepRange
+	}
 	timezone = strings.TrimSpace(timezone)
 	if timezone != "" {
 		if _, err := time.LoadLocation(timezone); err != nil {
@@ -299,6 +321,10 @@ func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEm
 		}
 	}
 	createdAt := s.now().UTC().Format(time.RFC3339Nano)
+	var stepArg any
+	if startStepMin != nil {
+		stepArg = *startStepMin
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -317,9 +343,9 @@ func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEm
 	if !s.inWindow(date, zoneVia(tx, ownerEmail)) {
 		return nil, ErrDateRequired
 	}
-	res, err := tx.Exec(`INSERT INTO meetings (name, description, duration_min, owner_email, owner_name, date, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		name, description, durationMin, ownerEmail, ownerName, date, createdAt)
+	res, err := tx.Exec(`INSERT INTO meetings (name, description, duration_min, start_step_min, owner_email, owner_name, date, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		name, description, durationMin, stepArg, ownerEmail, ownerName, date, createdAt)
 	if err != nil {
 		return nil, err
 	}
@@ -330,8 +356,8 @@ func (s *Store) CreateMeeting(name, description string, durationMin int, ownerEm
 	}
 	t, _ := time.Parse(time.RFC3339Nano, createdAt)
 	return &Meeting{ID: pubID("m", id), Name: name, Description: description, DurationMin: durationMin,
-		OwnerEmail: ownerEmail, OwnerName: ownerName, Date: date, State: MeetingActive,
-		Timezone: tzName, CreatedAt: t}, nil
+		StartStepMin: startStepMin, OwnerEmail: ownerEmail, OwnerName: ownerName, Date: date,
+		State: MeetingActive, Timezone: tzName, CreatedAt: t}, nil
 }
 
 // Meetings возвращает доступные Встречи — все (для посетителя) или одного
@@ -454,20 +480,21 @@ func (s *Store) DaySlots(meetingID string) ([]Slot, bool) {
 	h := s.WorkHours(m.OwnerEmail, m.Date)
 	zone := s.resolveZone(m.OwnerEmail)
 	busy := busyByOwner(s.db, m.OwnerEmail, m.Date, m.Date)[m.Date]
-	return GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(zone, m.Date), busy), true
+	return GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, m.startStep(), s.dayNowMin(zone, m.Date), busy), true
 }
 
 // PreviewSlots — превью сетки дня для ещё не созданной Встречи (Сценарий 1:
 // организатор видит доступность, конкретный Интервал не выбирает).
 // Если owner задан, учитываются его уже забронированные Встречи.
-func (s *Store) PreviewSlots(ownerEmail, date string, durationMin int) []Slot {
+// stepMin <= 0 — шаг равен длительности.
+func (s *Store) PreviewSlots(ownerEmail, date string, durationMin, stepMin int) []Slot {
 	h := s.WorkHours(ownerEmail, date)
 	zone := s.resolveZone(ownerEmail)
 	var busy []Interval
 	if ownerEmail != "" {
 		busy = busyByOwner(s.db, ownerEmail, date, date)[date]
 	}
-	return GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(zone, date), busy)
+	return GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, stepMin, s.dayNowMin(zone, date), busy)
 }
 
 // MeetingAvailability — число свободных Интервалов на день Встречи
@@ -482,8 +509,9 @@ func (s *Store) MeetingAvailability(meetingID string) (DayAvailability, bool) {
 }
 
 // PreviewAvailability — окно доступности для создаваемой Встречи: каждый
-// день считается по своим границам этого организатора.
-func (s *Store) PreviewAvailability(durationMin int, ownerEmail string) []DayAvailability {
+// день считается по своим границам этого организатора. stepMin <= 0 — шаг
+// равен длительности.
+func (s *Store) PreviewAvailability(durationMin, stepMin int, ownerEmail string) []DayAvailability {
 	zone := s.resolveZone(ownerEmail)
 	out := make([]DayAvailability, 0, windowDays)
 	base, _ := time.Parse("2006-01-02", s.todayIn(zone))
@@ -498,7 +526,7 @@ func (s *Store) PreviewAvailability(durationMin int, ownerEmail string) []DayAva
 		if allBusy != nil {
 			busy = allBusy[date]
 		}
-		slots := GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, s.dayNowMin(zone, date), busy)
+		slots := GenerateSlots(h.WorkStart, h.WorkEnd, durationMin, stepMin, s.dayNowMin(zone, date), busy)
 		out = append(out, DayAvailability{Date: date, Free: FreeCount(slots)})
 	}
 	return out
@@ -543,7 +571,7 @@ func (s *Store) Book(meetingID, start, name, email string) (*Booking, error) {
 
 	h := workHoursVia(tx, m.OwnerEmail, m.Date)
 	busy := busyByOwner(tx, m.OwnerEmail, m.Date, m.Date)[m.Date]
-	slots := GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, s.dayNowMin(zone, m.Date), busy)
+	slots := GenerateSlots(h.WorkStart, h.WorkEnd, m.DurationMin, m.startStep(), s.dayNowMin(zone, m.Date), busy)
 	slot, allowed := SlotAllowed(slots, start)
 	if !allowed {
 		if slot.Status == SlotTaken {
