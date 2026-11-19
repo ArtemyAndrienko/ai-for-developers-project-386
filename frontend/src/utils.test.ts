@@ -166,7 +166,7 @@ describe("nearestFreeStarts (жёсткий конфликт: ближайшие
     slot("10:30", "free"),
     slot("11:00", "free"),
     slot("11:30", "free"),
-    slot("12:00", "tail"),
+    slot("12:00", "past"),
   ];
 
   it("даёт первые свободные старты, начиная с попытки", () => {
@@ -179,6 +179,8 @@ describe("nearestFreeStarts (жёсткий конфликт: ближайшие
 
   it("исключает прошлые и занятые статусами — пустой результат после последних слотов", () => {
     expect(nearestFreeStarts(grid, "13:00")).toEqual([]);
+    // последний интервал сетки «прошёл» — в баннер не попадает.
+    expect(nearestFreeStarts(grid, "12:00")).toEqual([]);
     expect(nearestFreeStarts([], "10:00")).toEqual([]);
     expect(nearestFreeStarts([slot("09:00", "taken"), slot("09:30", "past")], "09:00")).toEqual([]);
   });
