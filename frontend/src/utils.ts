@@ -53,7 +53,7 @@ export function slotLabel(status: string): string {
 
 export const emailLike = (s: string) => /\S+@\S+\.\S+/.test(s.trim());
 
-import type { BookingView } from "./types";
+import type { BookingView, Slot } from "./types";
 
 // Единый предикат «не предстоящая»: завершившаяся или отменённая Запись —
 // группа «Прошедшие», без кнопки отмены (используется и для конфликтов).
@@ -81,6 +81,14 @@ export function visitorClashes(
       hmToMin(b.start) < e &&
       s < hmToMin(b.end),
   );
+}
+
+// Жёсткий конфликт (GLOSSARY: «Конфликт» по Организатору): после 409 предлагаем
+// ближайшие свободные старты из перезагруженной сетки, начиная с попытки.
+// Прошедшие/занятые/хвостовые исключены статусом free — «не раньше сейчас»
+// обеспечивает сама сетка. Без имён встреч и записей: приватность (билет #6).
+export function nearestFreeStarts(slots: Slot[], attemptedStart: string, limit = 3): Slot[] {
+  return slots.filter((s) => s.status === "free" && s.start >= attemptedStart).slice(0, limit);
 }
 
 // Источник терминального «Отменена» выводится из состояний, отдельно не

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BookingView } from "./types";
+import type { BookingView, Slot, SlotStatus } from "./types";
 import {
   addDays,
   buildWindow,
@@ -9,6 +9,7 @@ import {
   hmToMin,
   isCancelledOrPast,
   isoDate,
+  nearestFreeStarts,
   slotLabel,
   visitorClashes,
   weekStartMonday,
@@ -148,5 +149,37 @@ describe("emailLike", () => {
     expect(emailLike("boss@x")).toBe(false); // требует доменной точки — мягче сервера не надо
     expect(emailLike("nope")).toBe(false);
     expect(emailLike("")).toBe(false);
+  });
+});
+
+describe("nearestFreeStarts (жёсткий конфликт: ближайшие свободные старты)", () => {
+  const slot = (start: string, status: SlotStatus): Slot => ({ start, end: start, status });
+  const grid: Slot[] = [
+    slot("09:00", "past"),
+    slot("09:30", "free"),
+    slot("10:00", "taken"),
+    slot("10:30", "free"),
+    slot("11:00", "free"),
+    slot("11:30", "free"),
+    slot("12:00", "tail"),
+  ];
+
+  it("даёт первые свободные старты, начиная с попытки", () => {
+    expect(nearestFreeStarts(grid, "10:00").map((s) => s.start)).toEqual(["10:30", "11:00", "11:30"]);
+  });
+
+  it("включает саму попытку, если она свободна", () => {
+    expect(nearestFreeStarts(grid, "09:30").map((s) => s.start)).toEqual(["09:30", "10:30", "11:00"]);
+  });
+
+  it("исключает прошлые и занятые статусами — пустой результат после последних слотов", () => {
+    expect(nearestFreeStarts(grid, "13:00")).toEqual([]);
+    expect(nearestFreeStarts([], "10:00")).toEqual([]);
+    expect(nearestFreeStarts([slot("09:00", "taken"), slot("09:30", "past")], "09:00")).toEqual([]);
+  });
+
+  it("уважает limit", () => {
+    expect(nearestFreeStarts(grid, "09:30", 2).map((s) => s.start)).toEqual(["09:30", "10:30"]);
+    expect(nearestFreeStarts(grid, "09:30", 1).map((s) => s.start)).toEqual(["09:30"]);
   });
 });
