@@ -32,6 +32,10 @@ interface CreateState {
   hoursNote: string;
 }
 
+// ADR-0002: канонический набор длительностей («тип события») — пресеты UI;
+// сервер по-прежнему принимает любой целый 1..1440.
+const CANONICAL_DURATIONS = [15, 30, 45, 60, 90, 120, 150, 180];
+
 
 export async function renderCreate(app: HTMLElement): Promise<void> {
   const state: CreateState = {
@@ -66,9 +70,9 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
         <label>Имя организатора <input id="owner-name" placeholder="Необязательно, видно посетителям" /></label>
         <label>Продолжительность
           <select id="dur">
-            ${[15, 30, 45, 60, 90, 120]
-              .map((d) => `<option value="${d}"${d === state.duration ? " selected" : ""}>${d} мин</option>`)
-              .join("")}
+            ${CANONICAL_DURATIONS.map(
+              (d) => `<option value="${d}"${d === state.duration ? " selected" : ""}>${d} мин</option>`,
+            ).join("")}
           </select>
         </label>
         <div id="hours"></div>
