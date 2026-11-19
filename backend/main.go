@@ -245,6 +245,22 @@ func (srv *server) handleCancelBooking(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// newMux — регистрация всех маршрутов API на http.ServeMux. Вынесена из
+// main, чтобы e2e (ADR-0005) поднимал тот же роутер поверх httptest.Server;
+// поведение боевого процесса не меняется.
+func newMux(store *Store) *http.ServeMux {
+	srv := &server{store: store}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/workhours", srv.handleWorkhours)
+	mux.HandleFunc("/api/meetings", srv.handleMeetings)
+	mux.HandleFunc("DELETE /api/meetings/{id}", srv.handleMeeting)
+	mux.HandleFunc("/api/meetings/{id}/{sub}", srv.handleMeeting)
+	mux.HandleFunc("/api/preview/{sub}", srv.handlePreview)
+	mux.HandleFunc("/api/bookings", srv.handleBookings)
+	mux.HandleFunc("DELETE /api/bookings/{id}", srv.handleCancelBooking)
+	return mux
+}
+
 func main() {
 	addr := os.Getenv("ADDR")
 	if addr == "" {
@@ -254,7 +270,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv := &server{store: store}
 
 	// Демо-данные только при пустой базе, иначе персистентный календарь
 	// каждый рестарт плодил бы новые «Демо-звонки».
@@ -269,17 +284,8 @@ func main() {
 		}
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/workhours", srv.handleWorkhours)
-	mux.HandleFunc("/api/meetings", srv.handleMeetings)
-	mux.HandleFunc("DELETE /api/meetings/{id}", srv.handleMeeting)
-	mux.HandleFunc("/api/meetings/{id}/{sub}", srv.handleMeeting)
-	mux.HandleFunc("/api/preview/{sub}", srv.handlePreview)
-	mux.HandleFunc("/api/bookings", srv.handleBookings)
-	mux.HandleFunc("DELETE /api/bookings/{id}", srv.handleCancelBooking)
-
 	log.Printf("calendar api on http://localhost%s (db: %s)", addr, dbPath)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, newMux(store)))
 }
 
 // openStore — персистентная база из env DATA_PATH; каталог создаём,
