@@ -593,7 +593,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/WorkHoursView"
+                "$ref": "#/components/schemas/WorkHoursInput"
               }
             }
           }
@@ -687,7 +687,8 @@
           "meetingOwnerName",
           "meetingOwnerEmail",
           "meetingState",
-          "past"
+          "past",
+          "timezone"
         ],
         "properties": {
           "meetingName": {
@@ -710,6 +711,10 @@
           "past": {
             "type": "boolean",
             "description": "Встреча уже закончилась — попадает в группу «Прошедшие»"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA-зона Организатора встречи: в её часах стоят start/end Записи; без профиля — UTC"
           }
         },
         "allOf": [
@@ -912,11 +917,13 @@
         },
         "description": "Границы рабочего дня 'HH:MM'"
       },
-      "WorkHoursView": {
+      "WorkHoursInput": {
         "type": "object",
         "required": [
           "owner",
-          "date"
+          "date",
+          "workStart",
+          "workEnd"
         ],
         "properties": {
           "owner": {
@@ -925,6 +932,36 @@
           "date": {
             "type": "string",
             "format": "date"
+          },
+          "workStart": {
+            "type": "string",
+            "format": "time"
+          },
+          "workEnd": {
+            "type": "string",
+            "format": "time"
+          }
+        },
+        "description": "Тело PUT /workhours: границы сохраняются только для пары (owner, date); зона — ответная, её просить не нужно"
+      },
+      "WorkHoursView": {
+        "type": "object",
+        "required": [
+          "owner",
+          "date",
+          "timezone"
+        ],
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA-зона Организатора из профиля; без профиля — UTC. В этих часах понимаются workStart/workEnd на дату"
           }
         },
         "allOf": [

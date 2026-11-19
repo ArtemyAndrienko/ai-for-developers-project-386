@@ -34,7 +34,8 @@ func writeErrInternal(w http.ResponseWriter, err error) {
 
 // bookingView — запись в представлении для клиента: встреча + флаг «пройдена»
 // + данные организатора (имя и/или email для вкладки «Мои записи») + состояние
-// Встречи (источник «Отменена» выводится на клиенте, не хранится).
+// Встречи (источник «Отменена» выводится на клиенте, не хранится) + её
+// часовая зона (часы start/end стоят по часам организатора, ADR-0004).
 type bookingView struct {
 	*Booking
 	MeetingName       string `json:"meetingName"`
@@ -42,16 +43,21 @@ type bookingView struct {
 	MeetingOwnerEmail string `json:"meetingOwnerEmail"`
 	MeetingState      string `json:"meetingState"`
 	Past              bool   `json:"past"`
+	Timezone          string `json:"timezone"`
 }
 
 type hoursView struct {
 	Owner string `json:"owner"`
 	Date  string `json:"date"`
+	// Timezone — зона профиля Организатора (дефолт UTC): в ней понимаются
+	// границы рабочего дня на дату.
+	Timezone string `json:"timezone"`
 	Hours
 }
 
 // /api/workhours?owner=boss@x.io&date=2026-11-20 — границы рабочего дня
-// конкретного организатора на конкретную дату (дефолт 09:00–18:00).
+// конкретного организатора на конкретную дату (дефолт 09:00–18:00) и его
+// IANA-зона (профиль > UTC) — в каких часах эти границы стоят.
 // PUT с телом {owner, date, workStart, workEnd} сохраняет границы только
 // для этой пары; страница создания при этом не «перезагружается» —
 // фронтенд обновляет превью на месте.
@@ -64,7 +70,11 @@ func (srv *server) handleWorkhours(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, ErrOwnerRequired)
 			return
 		}
-		writeJSON(w, http.StatusOK, hoursView{Owner: owner, Date: date, Hours: srv.store.WorkHours(owner, date)})
+		writeJSON(w, http.StatusOK, hoursView{
+			Owner: owner, Date: date,
+			Timezone: srv.store.OrganizerZone(owner),
+			Hours:    srv.store.WorkHours(owner, date),
+		})
 	case http.MethodPut:
 		var req hoursView
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -75,7 +85,11 @@ func (srv *server) handleWorkhours(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusUnprocessableEntity, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, hoursView{Owner: req.Owner, Date: req.Date, Hours: srv.store.WorkHours(req.Owner, req.Date)})
+		writeJSON(w, http.StatusOK, hoursView{
+			Owner: req.Owner, Date: req.Date,
+			Timezone: srv.store.OrganizerZone(req.Owner),
+			Hours:    srv.store.WorkHours(req.Owner, req.Date),
+		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -226,12 +240,15 @@ func (srv *server) handleBookings(w http.ResponseWriter, r *http.Request) {
 	}
 	views := []bookingView{}
 	for _, b := range srv.store.BookingsByUser(email) {
-		view := bookingView{Booking: b, Past: srv.store.IsPast(b), MeetingState: MeetingActive}
+		// Встреча может быть уже без различимого профиля — зону даёт
+		// SQL-джойн с COALESCE 'UTC'; нет и Встречи — тот же UTC-фолбэк.
+		view := bookingView{Booking: b, Past: srv.store.IsPast(b), MeetingState: MeetingActive, Timezone: "UTC"}
 		if m, ok := srv.store.Meeting(b.MeetingID); ok {
 			view.MeetingName = m.Name
 			view.MeetingOwnerName = m.OwnerName
 			view.MeetingOwnerEmail = m.OwnerEmail
 			view.MeetingState = m.State
+			view.Timezone = m.Timezone
 		}
 		views = append(views, view)
 	}

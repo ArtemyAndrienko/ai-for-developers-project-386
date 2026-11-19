@@ -217,6 +217,8 @@ export interface components {
             meetingState: components["schemas"]["MeetingState"];
             /** @description Встреча уже закончилась — попадает в группу «Прошедшие» */
             past: boolean;
+            /** @description IANA-зона Организатора встречи: в её часах стоят start/end Записи; без профиля — UTC */
+            timezone: string;
         } & components["schemas"]["Booking"];
         /** @description Число свободных интервалов на день (бейдж «18 св.») */
         DayAvailability: {
@@ -300,11 +302,23 @@ export interface components {
             /** Format: time */
             workEnd: string;
         };
+        /** @description Тело PUT /workhours: границы сохраняются только для пары (owner, date); зона — ответная, её просить не нужно */
+        WorkHoursInput: {
+            owner: string;
+            /** Format: date */
+            date: string;
+            /** Format: time */
+            workStart: string;
+            /** Format: time */
+            workEnd: string;
+        };
         /** @description Границы рабочего дня, сопоставленные с парой (email организатора, дата) */
         WorkHoursView: {
             owner: string;
             /** Format: date */
             date: string;
+            /** @description IANA-зона Организатора из профиля; без профиля — UTC. В этих часах понимаются workStart/workEnd на дату */
+            timezone: string;
         } & components["schemas"]["WorkHours"];
     };
     responses: never;
@@ -715,7 +729,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkHoursView"];
+                "application/json": components["schemas"]["WorkHoursInput"];
             };
         };
         responses: {

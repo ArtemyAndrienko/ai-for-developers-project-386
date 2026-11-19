@@ -37,6 +37,17 @@ model WorkHours {
 model WorkHoursView extends WorkHours {
   owner: string;
   date: plainDate;
+
+  @doc("IANA-зона Организатора из профиля; без профиля — UTC. В этих часах понимаются workStart/workEnd на дату")
+  timezone: string;
+}
+
+@doc("Тело PUT /workhours: границы сохраняются только для пары (owner, date); зона — ответная, её просить не нужно")
+model WorkHoursInput {
+  owner: string;
+  date: plainDate;
+  workStart: plainTime;
+  workEnd: plainTime;
 }
 
 @doc("Состояние Встречи: cancelled — терминальное (Отмена Встречи Организатором)")
@@ -152,6 +163,9 @@ model BookingView extends Booking {
 
   @doc("Встреча уже закончилась — попадает в группу «Прошедшие»")
   past: boolean;
+
+  @doc("IANA-зона Организатора встречи: в её часах стоят start/end Записи; без профиля — UTC")
+  timezone: string;
 }
 
 @doc("Тело POST /meetings/{id}/book — день берётся из встречи")
@@ -174,7 +188,7 @@ interface WorkHoursApi {
 
   @put
   @doc("Сохранить границы только для пары (owner, date)")
-  setHours(@body body: WorkHoursView):
+  setHours(@body body: WorkHoursInput):
     | WorkHoursView
     | ApiError<400>
     | ApiError<422>;

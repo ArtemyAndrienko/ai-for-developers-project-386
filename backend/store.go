@@ -198,6 +198,10 @@ func zoneVia(e execer, ownerEmail string) *time.Location {
 // resolveZone — зона Организатора по email (вне транзакции).
 func (s *Store) resolveZone(ownerEmail string) *time.Location { return zoneVia(s.db, ownerEmail) }
 
+// OrganizerZone — IANA-имя зоны из профиля Организатора; без профиля — «UTC».
+// Для ответов, где зона объясняет, в каких часах стоят границы рабочего дня.
+func (s *Store) OrganizerZone(ownerEmail string) string { return zoneNameVia(s.db, ownerEmail) }
+
 func (s *Store) todayIn(zone *time.Location) string { return s.now().In(zone).Format("2006-01-02") }
 
 func (s *Store) windowLastIn(zone *time.Location) string {
