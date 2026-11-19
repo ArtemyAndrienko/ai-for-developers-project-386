@@ -126,7 +126,7 @@ func TestE2E_HappyCycle(t *testing.T) {
 
 	var meeting Meeting
 	code = e2eDo(t, srv, http.MethodPost, "/api/meetings", map[string]any{
-		"name":        "E2E-звонок",
+		"name":        "E2E-встреча",
 		"description": "Сквозной HTTP-сценарий",
 		"durationMin": 30,
 		"ownerEmail":  "boss@x.io",
@@ -170,7 +170,7 @@ func TestE2E_HappyCycle(t *testing.T) {
 	var views []e2eBookingView
 	code = e2eDo(t, srv, http.MethodGet, "/api/bookings?email=ivan@example.com", nil, &views)
 	e2eWantCode(t, "GET bookings", code, http.StatusOK)
-	if len(views) != 1 || views[0].ID != booking.ID || views[0].MeetingName != "E2E-звонок" {
+	if len(views) != 1 || views[0].ID != booking.ID || views[0].MeetingName != "E2E-встреча" {
 		t.Fatalf("bookings?email: %+v, хотим ровно запись %s встречи", views, booking.ID)
 	}
 

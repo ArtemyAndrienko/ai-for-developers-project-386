@@ -95,7 +95,7 @@ func TestGenerateSlots_Statuses(t *testing.T) {
 	}
 }
 
-// Плотная сетка: одна бронь 10:00–11:00 блокирует оба пересекающихся
+// Плотная сетка: одна Запись 10:00–11:00 блокирует оба пересекающихся
 // получасовых старта (60/30), непересекающиеся свободны.
 func TestGenerateSlots_OverlapFromOtherMeeting(t *testing.T) {
 	busy := []Interval{{Start: 10 * 60, End: 11 * 60}}
