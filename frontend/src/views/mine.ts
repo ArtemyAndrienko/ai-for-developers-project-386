@@ -92,6 +92,9 @@ function listHtml(bookings: BookingView[], hidePast: boolean): string {
     const source = cancelSourceLabel(b);
     // Билет #13: то же правило отображения, что на экране записи, — часы
     // Организатора встречи (без профиля по контракту — UTC) с подписью пояса.
+    // Решение #13 Q3=a: локальное время в скобках — только у предстоящих;
+    // прошедшим и отменённым хватает часов Организатора с подписью.
+    const isUpcoming = !isCancelledOrPast(b);
     const zone = b.timezone || "UTC";
     const t = formatVisitorTime(b.start, b.end, zone, browserZone(), b.date);
     return `
@@ -101,13 +104,13 @@ function listHtml(bookings: BookingView[], hidePast: boolean): string {
         ${source ? `<span class="badge">Отменена · ${source}</span>` : ""}
         ${organizer(b) ? `<span class="organizer">Организатор: ${organizer(b)}</span>` : ""}
       </div>
-      <div title="${zone}">${ruLongDate(b.date)} · ${t.primary}${t.secondary}</div>
+      <div title="${zone}">${ruLongDate(b.date)} · ${t.primary}${isUpcoming ? t.secondary : ""}</div>
       <div class="muted">${b.name}, ${b.email}</div>
       <div class="muted">Создано: ${new Date(b.createdAt).toLocaleString("ru-RU")}</div>
       ${
-        isCancelledOrPast(b)
-          ? ""
-          : `<button class="btn danger" data-cancel="${b.id}">Отменить</button>`
+        isUpcoming
+          ? `<button class="btn danger" data-cancel="${b.id}">Отменить</button>`
+          : ""
       }
     </li>`;
   };

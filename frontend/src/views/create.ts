@@ -10,6 +10,7 @@
 import { api } from "../api";
 import { buildCalendar, renderCalendar } from "../calendar";
 import {
+  browserZone,
   emailLike,
   OWNER_EMAIL_KEY,
   OWNER_NAME_KEY,
@@ -39,16 +40,6 @@ interface CreateState {
 // сервер по-прежнему принимает любой целый 1..1440.
 const CANONICAL_DURATIONS = [15, 30, 45, 60, 90, 120, 150, 180];
 
-// Зона браузера как предзаполнение поля «Часовой пояс» (user story 2);
-// в нестандартных средах — пусто, сервер тогда не трогает профиль.
-function browserTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
-  } catch {
-    return "";
-  }
-}
-
 // Пресеты шага стартов — только UI-подсказки (ADR-0002 для шага — то же
 // правило); сервер валидирует целый 1..длительности.
 const STEP_PRESETS = [15, 30, 45, 60, 90];
@@ -62,7 +53,9 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
     description: "",
     owner: localStorage.getItem(OWNER_EMAIL_KEY) ?? "",
     ownerName: localStorage.getItem(OWNER_NAME_KEY) ?? "",
-    timezone: browserTimezone(),
+    // Предзаполнение поля «Часовой пояс» зоной браузера (user story 2);
+    // в нестандартных средах — пусто, сервер тогда не трогает профиль.
+    timezone: browserZone(),
     duration: 30,
     step: null,
     date: null,

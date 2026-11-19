@@ -111,8 +111,9 @@ export function browserZone(): string {
   }
 }
 
-// «Настенные» минуты зоны в данный момент (epoch ms): DST-смещение берёт на
-// себя сам Intl, потому что parts считаем от instant в этой зоне.
+// «Настенные» минуты зоны для переданного момента (epoch ms): смещение берёт на
+// себя Intl по самому instant, а не по «сейчас», — DST-фаза соответствует дате
+// вызывающего.
 function zoneWallMinutes(zone: string, instantMs: number): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: zone,
@@ -136,7 +137,8 @@ function zoneWallMinutes(zone: string, instantMs: number): number {
   return Math.floor(wall / 60000);
 }
 
-// Момент (epoch ms), когда в зоне zone настенные часы показывают date HH:MM.
+// Момент (epoch ms), когда в зоне zone настенные часы показывают date HH:MM:
+// смещение вычисляется по переданной дате, а не по текущему времени.
 // Вторая итерация уточняет смещение на случай DST-перехода в интервале guesses.
 function wallToInstant(date: string, hm: string, zone: string): number {
   const [h, m] = hm.split(":").map(Number);
@@ -162,14 +164,17 @@ function zoneShortLabel(zone: string, date: string): string {
 
 export interface VisitorTime {
   primary: string; // «10:00–10:30» + подпись пояса организатора (кроме sameZone)
-  secondary: string; // « (08:00–10:00)» — локальные границы посетителя, если зоны различаются
+  secondary: string; // « (08:00–10:00 у вас)» — локальные границы посетителя,
+  // если зоны различаются; при расхождении календарных дней добавляется
+  // маркер «, предыдущий день» / «, следующий день»
   sameZone: boolean;
 }
 
 // Отображение времени Посетителю (билет #13, README сценарий 2): первичны часы
 // Организатора — HH:MM из сетки уже в его зоне, — с подписью пояса; локальное
-// время браузера — в скобках только при различии зон. Даты НЕ конвертируются:
-// день остаётся днём Организатора, date нужен лишь для DST-смещения.
+// время браузера — в скобках с меткой «у вас» только при различии зон. Даты
+// НЕ конвертируются: календарная подпись остаётся днём Организатора, date
+// нужен для DST-смещения и для маркера переноса суток в secondary.
 export function formatVisitorTime(
   start: string,
   end: string,
@@ -186,12 +191,22 @@ export function formatVisitorTime(
   let secondary = "";
   try {
     if (organizerZone && visitorZone) {
-      const toHm = (hm: string) => {
+      const organizerDay = Math.floor(Date.parse(`${date}T00:00:00Z`) / 86_400_000);
+      const toLocal = (hm: string) => {
         const mins = zoneWallMinutes(visitorZone, wallToInstant(date, hm, organizerZone));
         const ofDay = ((mins % 1440) + 1440) % 1440; // перенос через полночь — только HH:MM
-        return `${String(Math.floor(ofDay / 60)).padStart(2, "0")}:${String(ofDay % 60).padStart(2, "0")}`;
+        return {
+          hm: `${String(Math.floor(ofDay / 60)).padStart(2, "0")}:${String(ofDay % 60).padStart(2, "0")}`,
+          day: Math.floor(mins / 1440), // календарный день посетителя (отсчёт от epoch)
+        };
       };
-      secondary = ` (${toHm(start)}–${toHm(end)})`;
+      const from = toLocal(start);
+      const to = toLocal(end);
+      // Маркер только при реальном расхождении календарных дней (по старту);
+      // сама подпись даты выше не меняется.
+      const shift =
+        from.day < organizerDay ? ", предыдущий день" : from.day > organizerDay ? ", следующий день" : "";
+      secondary = ` (${from.hm}–${to.hm} у вас${shift})`;
     }
   } catch {
     secondary = ""; // неизвестная/битая зона посетителя — без локальной строки
