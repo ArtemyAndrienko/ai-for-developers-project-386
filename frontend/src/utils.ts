@@ -101,6 +101,104 @@ export function cancelSourceLabel(booking: BookingView): string | null {
     : "отменено посетителем";
 }
 
+// Сценарий 2 (билет #13): зона браузера посетителя — IANA-имя или "" при
+// отказе Intl. Фолбэк "" означает «неизвестно»: локальное время не показываем.
+export function browserZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+  } catch {
+    return "";
+  }
+}
+
+// «Настенные» минуты зоны в данный момент (epoch ms): DST-смещение берёт на
+// себя сам Intl, потому что parts считаем от instant в этой зоне.
+function zoneWallMinutes(zone: string, instantMs: number): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(instantMs));
+  const value = (type: string) => parts.find((p) => p.type === type)!.value;
+  const wall = Date.UTC(
+    Number(value("year")),
+    Number(value("month")) - 1,
+    Number(value("day")),
+    Number(value("hour")) % 24,
+    Number(value("minute")),
+    Number(value("second")),
+  );
+  return Math.floor(wall / 60000);
+}
+
+// Момент (epoch ms), когда в зоне zone настенные часы показывают date HH:MM.
+// Вторая итерация уточняет смещение на случай DST-перехода в интервале guesses.
+function wallToInstant(date: string, hm: string, zone: string): number {
+  const [h, m] = hm.split(":").map(Number);
+  const guess = Date.parse(`${date}T00:00:00Z`) + (h * 60 + m) * 60000;
+  let instant = guess - (zoneWallMinutes(zone, guess) - Math.floor(guess / 60000)) * 60000;
+  instant = guess - (zoneWallMinutes(zone, instant) - Math.floor(instant / 60000)) * 60000;
+  return instant;
+}
+
+// Человекочитаемая подпись пояса организатора на дату (GMT+3/МСК — что даст
+// Intl). Якорь — полдень даты, чтобы смещение взять в DST-фазе того дня.
+function zoneShortLabel(zone: string, date: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("ru-RU", {
+      timeZone: zone,
+      timeZoneName: "short",
+    }).formatToParts(new Date(`${date}T12:00:00Z`));
+    return parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+  } catch {
+    return ""; // неIANA-мусор в зоне — подпись просто отсутствует
+  }
+}
+
+export interface VisitorTime {
+  primary: string; // «10:00–10:30» + подпись пояса организатора (кроме sameZone)
+  secondary: string; // « (08:00–10:00)» — локальные границы посетителя, если зоны различаются
+  sameZone: boolean;
+}
+
+// Отображение времени Посетителю (билет #13, README сценарий 2): первичны часы
+// Организатора — HH:MM из сетки уже в его зоне, — с подписью пояса; локальное
+// время браузера — в скобках только при различии зон. Даты НЕ конвертируются:
+// день остаётся днём Организатора, date нужен лишь для DST-смещения.
+export function formatVisitorTime(
+  start: string,
+  end: string,
+  organizerZone: string,
+  visitorZone: string,
+  date: string,
+): VisitorTime {
+  const plain = `${start}–${end}`;
+  const norm = (z: string) => z.trim().toLowerCase();
+  if (organizerZone && norm(organizerZone) === norm(visitorZone)) {
+    return { primary: plain, secondary: "", sameZone: true };
+  }
+  const label = organizerZone ? zoneShortLabel(organizerZone, date) : "";
+  let secondary = "";
+  try {
+    if (organizerZone && visitorZone) {
+      const toHm = (hm: string) => {
+        const mins = zoneWallMinutes(visitorZone, wallToInstant(date, hm, organizerZone));
+        const ofDay = ((mins % 1440) + 1440) % 1440; // перенос через полночь — только HH:MM
+        return `${String(Math.floor(ofDay / 60)).padStart(2, "0")}:${String(ofDay % 60).padStart(2, "0")}`;
+      };
+      secondary = ` (${toHm(start)}–${toHm(end)})`;
+    }
+  } catch {
+    secondary = ""; // неизвестная/битая зона посетителя — без локальной строки
+  }
+  return { primary: label ? `${plain} ${label}` : plain, secondary, sameZone: false };
+}
+
 const ruDate = new Intl.DateTimeFormat("ru-RU", {
   weekday: "long",
   day: "numeric",

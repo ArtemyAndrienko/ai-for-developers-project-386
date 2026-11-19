@@ -3,7 +3,9 @@
 
 import { api, ApiError } from "../api";
 import {
+  browserZone,
   emailLike,
+  formatVisitorTime,
   LAST_EMAIL_KEY,
   nearestFreeStarts,
   ruLongDate,
@@ -168,11 +170,7 @@ export async function renderBook(app: HTMLElement): Promise<void> {
         ${infoCard(state, meeting())}
         <div class="card">
           <h3>Статус интервалов</h3>
-          ${
-            !state.meetingId
-              ? `<div class="hint">Выберите встречу выше.</div>`
-              : conflictBanner(state) + slotsList(state)
-          }
+          ${!state.meetingId ? `<div class="hint">Выберите встречу выше.</div>` : conflictBanner(state) + slotsList(state, meeting())}
           <div class="row">
             <button class="btn ghost" id="back">Назад</button>
             <button class="btn primary" id="next" ${state.slotStart ? "" : "disabled"}>Продолжить</button>
@@ -236,13 +234,21 @@ function infoCard(state: BookState, m: Meeting | null): string {
       <div class="kv"><span>Встреча</span><strong>${m ? m.name : "—"}</strong></div>
       <div class="kv"><span>Дата</span><strong>${m ? ruLongDate(m.date) : "Дата не выбрана"}</strong></div>
       <div class="kv"><span>Выбранное время</span><strong>${
-        slot ? `${slot.start} - ${slot.end}` : "Время не выбрано"
+        slot ? visitorTime(m, slot.start, slot.end) : "Время не выбрано"
       }</strong></div>
       <div class="kv"><span>Свободно</span><strong>${state.meetingId ? free : 0}</strong></div>
       <div class="kv"><span>Длительность интервала</span><strong>${
         m ? `${m.durationMin} мин` : "—"
       }</strong></div>
     </div>`;
+}
+
+// Билет #13: HH:MM из сетки — это часы Организатора; показываем их с подписью
+// пояса и локальное время Посетителя в скобках (чисто, если зоны совпали).
+function visitorTime(m: Meeting | null, start: string, end: string): string {
+  if (!m) return `${start}–${end}`;
+  const t = formatVisitorTime(start, end, m.timezone, browserZone(), m.date);
+  return `${t.primary}${t.secondary}`;
 }
 
 // Баннер жёсткого конфликта (GLOSSARY: «Конфликт» по Организатору, решение #6):
@@ -263,7 +269,7 @@ function conflictBanner(state: BookState): string {
     }`;
 }
 
-function slotsList(state: BookState): string {
+function slotsList(state: BookState, m: Meeting | null): string {
   const parts: string[] = [];
   if (state.error) parts.push(`<div class="error">${state.error}</div>`);
   parts.push(`<ul class="slots">
@@ -275,8 +281,10 @@ function slotsList(state: BookState): string {
           selectable ? "" : "off",
           state.slotStart === s.start ? "selected" : "",
         ].join(" ");
-        return `<li class="${cls}" data-slot="${s.start}" data-selectable="${selectable ? "1" : "0"}">
-          <span>${s.start} - ${s.end}</span><b>${slotLabel(s.status)}</b></li>`;
+        // IANA-зона организатора — в подсказке строки (билет #13, US-9).
+        const hint = m?.timezone ? ` title="${m.timezone}"` : "";
+        return `<li class="${cls}" data-slot="${s.start}" data-selectable="${selectable ? "1" : "0"}"${hint}>
+          <span>${visitorTime(m, s.start, s.end)}</span><b>${slotLabel(s.status)}</b></li>`;
       })
       .join("")}
   </ul>`);

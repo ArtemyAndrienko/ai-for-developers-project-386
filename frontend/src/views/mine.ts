@@ -5,7 +5,9 @@
 
 import { api } from "../api";
 import {
+  browserZone,
   cancelSourceLabel,
+  formatVisitorTime,
   groupBookings,
   HIDE_PAST_KEY,
   isCancelledOrPast,
@@ -88,6 +90,10 @@ function listHtml(bookings: BookingView[], hidePast: boolean): string {
     [b.meetingOwnerName, b.meetingOwnerEmail].filter(Boolean).join(" · ");
   const card = (b: BookingView) => {
     const source = cancelSourceLabel(b);
+    // Билет #13: то же правило отображения, что на экране записи, — часы
+    // Организатора встречи (без профиля по контракту — UTC) с подписью пояса.
+    const zone = b.timezone || "UTC";
+    const t = formatVisitorTime(b.start, b.end, zone, browserZone(), b.date);
     return `
     <li class="card booking${b.past ? " off" : ""}">
       <div class="booking-head">
@@ -95,7 +101,7 @@ function listHtml(bookings: BookingView[], hidePast: boolean): string {
         ${source ? `<span class="badge">Отменена · ${source}</span>` : ""}
         ${organizer(b) ? `<span class="organizer">Организатор: ${organizer(b)}</span>` : ""}
       </div>
-      <div>${ruLongDate(b.date)} · ${b.start} - ${b.end}</div>
+      <div title="${zone}">${ruLongDate(b.date)} · ${t.primary}${t.secondary}</div>
       <div class="muted">${b.name}, ${b.email}</div>
       <div class="muted">Создано: ${new Date(b.createdAt).toLocaleString("ru-RU")}</div>
       ${
