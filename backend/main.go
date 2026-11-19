@@ -295,14 +295,28 @@ func newMux(store *Store) *http.ServeMux {
 	mux.HandleFunc("/api/preview/{sub}", srv.handlePreview)
 	mux.HandleFunc("/api/bookings", srv.handleBookings)
 	mux.HandleFunc("DELETE /api/bookings/{id}", srv.handleCancelBooking)
+	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	// SPA (go:embed web/dist): частные /api-маршруты всегда специфичнее
+	// этого catch-all, конфликтов нет.
+	mux.Handle("/", staticHandler())
 	return mux
 }
 
-func main() {
-	addr := os.Getenv("ADDR")
-	if addr == "" {
-		addr = ":8080"
+// listenAddr: явный ADDR > PORT (convention хостингов, в т.ч. Render) > :8080.
+func listenAddr() string {
+	if addr := os.Getenv("ADDR"); addr != "" {
+		return addr
 	}
+	if port := os.Getenv("PORT"); port != "" {
+		return ":" + port
+	}
+	return ":8080"
+}
+
+func main() {
+	addr := listenAddr()
 	store, dbPath, err := openStore()
 	if err != nil {
 		log.Fatal(err)

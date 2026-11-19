@@ -17,3 +17,7 @@ data/
 # OS/editor
 .DS_Store
 *.swp
+
+# собранный фронтенд внутри embed-директории (в git — только placeholder)
+backend/web/dist/*
+!backend/web/dist/index.html
