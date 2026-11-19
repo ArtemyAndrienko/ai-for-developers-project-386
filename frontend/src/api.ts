@@ -98,11 +98,13 @@ export const api = {
     return data as Slot[];
   },
 
-  // Превью сетки до сохранения встречи (Сценарий 1); step=0/undefined — «как длительность».
+  // Превью сетки до сохранения встречи (Сценарий 1); step=0/undefined — «как длительность»,
+  // timezone — зона-фолбэк до первого сохранения профиля (переданная > профиль > UTC).
   previewAvailability: async (
     duration: number,
     owner: string,
     step?: number,
+    timezone?: string,
   ): Promise<DayAvailability[]> => {
     const { data, ...res } = await client.GET("/api/preview/availability", {
       params: {
@@ -110,6 +112,7 @@ export const api = {
           duration,
           owner: owner || undefined,
           step: step && step > 0 ? step : undefined,
+          timezone: timezone || undefined,
         },
       },
     });
@@ -122,6 +125,7 @@ export const api = {
     date: string,
     duration: number,
     step?: number,
+    timezone?: string,
   ): Promise<Slot[]> => {
     const { data, ...res } = await client.GET("/api/preview/slots", {
       params: {
@@ -130,6 +134,7 @@ export const api = {
           date,
           duration,
           step: step && step > 0 ? step : undefined,
+          timezone: timezone || undefined,
         },
       },
     });

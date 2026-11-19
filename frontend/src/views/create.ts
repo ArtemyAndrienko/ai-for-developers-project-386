@@ -74,7 +74,7 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
   };
 
   state.meetings = await api.meetings(state.owner || undefined);
-  state.availability = await api.previewAvailability(state.duration, state.owner);
+  state.availability = await api.previewAvailability(state.duration, state.owner, undefined, state.timezone);
   // Каркас рисуется один раз; дальше обновляем только контейнеры превью
   // (#cal, #slots, #hours) — поля формы не пересоздаются (Сценарий 1:
   // сохранение границ дня не должно «перезагружать» страницу создания).
@@ -231,10 +231,18 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
     }
   };
 
+  // Превью считается в зоне формы (переданная > сохранённый профиль > UTC):
+  // до первого сохранения «сегодня» и «прошло» идут по часам поля
+  // «Часовой пояс», а не локации сервера — иначе у полуночи превью
+  // разъезжается с сохранённой встречей. Контейнеры превью (#cal/#slots)
+  // перерисовываются, поля формы не трогаются.
   const refreshPreview = async () => {
     const step = state.step ?? undefined;
-    state.availability = await api.previewAvailability(state.duration, state.owner, step);
-    state.slots = state.date ? await api.previewSlots(state.owner, state.date, state.duration, step) : [];
+    const tz = state.timezone.trim();
+    state.availability = await api.previewAvailability(state.duration, state.owner, step, tz);
+    state.slots = state.date
+      ? await api.previewSlots(state.owner, state.date, state.duration, step, tz)
+      : [];
     renderCal();
     renderSlots();
   };
@@ -287,6 +295,12 @@ export async function renderCreate(app: HTMLElement): Promise<void> {
   });
   tzInput.addEventListener("input", () => {
     state.timezone = tzInput.value;
+  });
+  // Смена пояса пересчитывает превью на месте: сетка и окно доступности
+  // живут в часах указанной зоны ещё до сохранения профиля.
+  tzInput.addEventListener("change", async () => {
+    state.timezone = tzInput.value.trim();
+    await refreshPreview();
   });
   ownerInput.addEventListener("change", async () => {
     state.owner = ownerInput.value.trim();
