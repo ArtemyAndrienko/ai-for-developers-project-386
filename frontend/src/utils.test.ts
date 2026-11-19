@@ -5,6 +5,7 @@ import {
   buildWindow,
   cancelSourceLabel,
   emailLike,
+  formatVisitorTime,
   groupBookings,
   hmToMin,
   isCancelledOrPast,
@@ -188,5 +189,39 @@ describe("nearestFreeStarts (жёсткий конфликт: ближайшие
   it("уважает limit", () => {
     expect(nearestFreeStarts(grid, "09:30", 2).map((s) => s.start)).toEqual(["09:30", "10:30"]);
     expect(nearestFreeStarts(grid, "09:30", 1).map((s) => s.start)).toEqual(["09:30"]);
+  });
+});
+
+describe("formatVisitorTime — отображение времени Посетителю (билет #13)", () => {
+  it("разные зоны: часы организатора с подписью пояса + локальное время в скобках", () => {
+    // Организатор из Колкаты (UTC+5:30), посетитель из Берлина: 25.10.2026
+    // DST в Европе закончился, ноябрьская дата — зимний UTC+1, смещение 4:30.
+    const r = formatVisitorTime("10:00", "10:30", "Asia/Kolkata", "Europe/Berlin", "2026-11-15");
+    expect(r.sameZone).toBe(false);
+    expect(r.primary).toBe("10:00–10:30 GMT+5:30");
+    expect(r.secondary).toBe(" (05:30–06:00)");
+  });
+
+  it("одинаковые зоны: чистый вывод без подписей и скобок", () => {
+    const r = formatVisitorTime("10:00", "10:30", "Europe/Berlin", "Europe/Berlin", "2026-11-15");
+    expect(r.sameZone).toBe(true);
+    expect(r.primary).toBe("10:00–10:30");
+    expect(r.secondary).toBe("");
+  });
+
+  it("полуночный перенос: у посетителя другой день, но подпись даты не меняется", () => {
+    // 00:30–01:00 MSK (UTC+3) 15.11 = 21:30–22:00 UTC 14.11 = 03:00–03:30
+    // Колкаты 15.11: в secondary только HH:MM, календарная дата остаётся днём организатора.
+    const r = formatVisitorTime("00:30", "01:00", "Europe/Moscow", "Asia/Kolkata", "2026-11-15");
+    expect(r.sameZone).toBe(false);
+    expect(r.primary).toBe("00:30–01:00 GMT+3");
+    expect(r.secondary).toBe(" (03:00–03:30)");
+  });
+
+  it("зона посетителя неизвестна (фолбэк Intl): только часы организатора с подписью", () => {
+    const r = formatVisitorTime("10:00", "10:30", "Asia/Kolkata", "", "2026-11-15");
+    expect(r.sameZone).toBe(false);
+    expect(r.primary).toBe("10:00–10:30 GMT+5:30");
+    expect(r.secondary).toBe("");
   });
 });
