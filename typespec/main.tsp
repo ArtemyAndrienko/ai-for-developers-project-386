@@ -69,6 +69,9 @@ model Meeting {
   @doc("Состояние Встречи; отменённая не выдаётся в списках и не бронируется")
   state: MeetingState;
 
+  @doc("IANA-зона Организатора из его профиля: Рабочий день, календарные даты, Окно доступности и вердикт «уже прошло» считаются в ней; без профиля — UTC")
+  timezone: string;
+
   createdAt: utcDateTime;
 }
 
@@ -80,6 +83,9 @@ model NewMeeting {
   ownerEmail: string;
   ownerName?: string;
   date: plainDate;
+
+  @doc("IANA-зона Организатора; при сохранении Встречи профиль создаётся/обновляется, пустое значение — профиль не трогать")
+  timezone?: string;
 }
 
 enum SlotStatus {
