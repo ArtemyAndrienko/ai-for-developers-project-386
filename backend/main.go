@@ -94,18 +94,19 @@ func (srv *server) handleMeetings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, srv.store.Meetings(owner))
 	case http.MethodPost:
 		var m struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			DurationMin int    `json:"durationMin"`
-			OwnerEmail  string `json:"ownerEmail"`
-			OwnerName   string `json:"ownerName"`
-			Date        string `json:"date"`
+			Name         string `json:"name"`
+			Description  string `json:"description"`
+			DurationMin  int    `json:"durationMin"`
+			StartStepMin *int   `json:"startStepMin"`
+			OwnerEmail   string `json:"ownerEmail"`
+			OwnerName    string `json:"ownerName"`
+			Date         string `json:"date"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
-		created, err := srv.store.CreateMeeting(m.Name, m.Description, m.DurationMin, m.OwnerEmail, m.OwnerName, m.Date)
+		created, err := srv.store.CreateMeeting(m.Name, m.Description, m.DurationMin, m.StartStepMin, m.OwnerEmail, m.OwnerName, m.Date)
 		if err != nil {
 			writeErr(w, http.StatusUnprocessableEntity, err)
 			return
@@ -174,10 +175,11 @@ func (srv *server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// /api/preview/availability?duration=30&owner=... и
-// /api/preview/slots?date=&duration=30&owner=... — превью сетки для ещё
+// /api/preview/availability?duration=30&step=15&owner=... и
+// /api/preview/slots?date=&duration=30&step=15&owner=... — превью сетки для ещё
 // не созданной встречи (Сценарий 1: организатор видит доступные интервалы,
-// конкретный интервал он не выбирает).
+// конкретный интервал он не выбирает). Шаг стартов необязателен: без него или
+// с step<=0 старты идут через длительность.
 func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	dur, err := strconv.Atoi(q.Get("duration"))
@@ -185,13 +187,21 @@ func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("некорректный параметр duration"))
 		return
 	}
+	step := 0
+	if raw := q.Get("step"); raw != "" {
+		step, err = strconv.Atoi(raw)
+		if err != nil || step < 1 || step > dur {
+			writeErr(w, http.StatusBadRequest, errors.New("некорректный параметр step: ожидается 1..duration"))
+			return
+		}
+	}
 	owner := q.Get("owner")
 	if owner != "" && !ValidEmail(owner) {
 		writeErr(w, http.StatusBadRequest, ErrOwnerRequired)
 		return
 	}
 	if r.PathValue("sub") == "availability" {
-		writeJSON(w, http.StatusOK, srv.store.PreviewAvailability(dur, owner))
+		writeJSON(w, http.StatusOK, srv.store.PreviewAvailability(dur, step, owner))
 		return
 	}
 	date := q.Get("date")
@@ -199,7 +209,7 @@ func (srv *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("не указан параметр date"))
 		return
 	}
-	writeJSON(w, http.StatusOK, srv.store.PreviewSlots(owner, date, dur))
+	writeJSON(w, http.StatusOK, srv.store.PreviewSlots(owner, date, dur, step))
 }
 
 // /api/bookings?email=... — все записи пользователя, прошедшие помечены past.
@@ -264,7 +274,7 @@ func main() {
 	}
 	if len(store.Meetings("")) == 0 {
 		demoDate := time.Now().AddDate(0, 0, demo).Format("2006-01-02")
-		if _, err := store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, "demo@calendar.app", "Демо-организатор", demoDate); err != nil {
+		if _, err := store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, nil, "demo@calendar.app", "Демо-организатор", demoDate); err != nil {
 			log.Fatal(err)
 		}
 	}
