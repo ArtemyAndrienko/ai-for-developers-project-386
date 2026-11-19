@@ -50,7 +50,12 @@ describe("интервалы", () => {
   it("метки статусов на русском, как в референсе", () => {
     expect(slotLabel("free")).toBe("Свободно");
     expect(slotLabel("taken")).toBe("Занято");
-    expect(slotLabel("tail")).toBe("Мало времени");
+    expect(slotLabel("past")).toBe("Прошло");
+  });
+
+  it("метка «Мало времени» упразднена вместе с хвостом (ADR-0003)", () => {
+    // tail больше нет в статусной сетке API; словарь не должен его подписывать.
+    expect(slotLabel("tail")).toBe("tail");
   });
 });
 

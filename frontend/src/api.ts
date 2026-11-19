@@ -71,6 +71,7 @@ export const api = {
     name: string;
     description: string;
     durationMin: number;
+    startStepMin?: number;
     ownerEmail: string;
     ownerName: string;
     date: string;
@@ -96,18 +97,40 @@ export const api = {
     return data as Slot[];
   },
 
-  // Превью сетки до сохранения встречи (Сценарий 1).
-  previewAvailability: async (duration: number, owner: string): Promise<DayAvailability[]> => {
+  // Превью сетки до сохранения встречи (Сценарий 1); step=0/undefined — «как длительность».
+  previewAvailability: async (
+    duration: number,
+    owner: string,
+    step?: number,
+  ): Promise<DayAvailability[]> => {
     const { data, ...res } = await client.GET("/api/preview/availability", {
-      params: { query: { duration, owner: owner || undefined } },
+      params: {
+        query: {
+          duration,
+          owner: owner || undefined,
+          step: step && step > 0 ? step : undefined,
+        },
+      },
     });
     ensureOk(res);
     return data as DayAvailability[];
   },
 
-  previewSlots: async (owner: string, date: string, duration: number): Promise<Slot[]> => {
+  previewSlots: async (
+    owner: string,
+    date: string,
+    duration: number,
+    step?: number,
+  ): Promise<Slot[]> => {
     const { data, ...res } = await client.GET("/api/preview/slots", {
-      params: { query: { owner: owner || undefined, date, duration } },
+      params: {
+        query: {
+          owner: owner || undefined,
+          date,
+          duration,
+          step: step && step > 0 ? step : undefined,
+        },
+      },
     });
     ensureOk(res);
     return data as Slot[];
