@@ -57,6 +57,9 @@ model Meeting {
   @doc("Длительность интервала в минутах")
   durationMin: int32;
 
+  @doc("Шаг стартов сетки в минутах; отсутствие = длительность Встречи (ADR-0003)")
+  startStepMin?: int32;
+
   @doc("Email организатора: по нему проверяется занятость во всех его встречах")
   ownerEmail: string;
 
@@ -77,6 +80,10 @@ model NewMeeting {
   name: string;
   description?: string;
   durationMin: int32;
+
+  @doc("Шаг стартов: целый 1..durationMin; отсутствие = длительность (422 при выходе за диапазон)")
+  startStepMin?: int32;
+
   ownerEmail: string;
   ownerName?: string;
   date: plainDate;
@@ -91,9 +98,6 @@ enum SlotStatus {
 
   @doc("Время начала уже прошло")
   past,
-
-  @doc("Хвостовой остаток дня короче продолжительности — серый, не выбирается")
-  tail,
 }
 
 @doc("Временной интервал (интервал) дня")
@@ -225,17 +229,22 @@ interface MeetingsApi {
 interface PreviewApi {
   @route("/availability")
   @get
-  @doc("Окно доступности на 14 дней для создаваемой встречи")
-  availability(@query duration: int32, @query owner?: string):
-    | DayAvailability[]
-    | ApiError<400>;
+  @doc("Окно доступности на 14 дней для создаваемой встречи; шаг стартов необязателен (без него = длительность)")
+  availability(
+    @query duration: int32,
+    @query @doc("Шаг стартов: целый 1..duration, иначе 400") step?: int32,
+    @query owner?: string,
+  ): DayAvailability[] | ApiError<400>;
 
   @route("/slots")
   @get
-  @doc("Сетка интервалов конкретного дня для создаваемой встречи")
-  slots(@query owner?: string, @query date: plainDate, @query duration: int32):
-    | Slot[]
-    | ApiError<400>;
+  @doc("Сетка интервалов конкретного дня для создаваемой встречи; шаг стартов необязателен (без него = длительность)")
+  slots(
+    @query owner?: string,
+    @query date: plainDate,
+    @query duration: int32,
+    @query @doc("Шаг стартов: целый 1..duration, иначе 400") step?: int32,
+  ): Slot[] | ApiError<400>;
 }
 
 // --- /api/bookings: «Мои записи» посетителя ---

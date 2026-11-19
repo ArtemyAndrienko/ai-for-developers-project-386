@@ -99,7 +99,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Забронировать интервал; 409 — занят (включая другие встречи организатора), 422 — встреча отменена */
+        /** @description Забронировать интервал; 409 — занят (включая другие встречи организатора), 422 — встреча отменена. При одновременных запросах на пересекающиеся интервалы одного организатора ровно одна запись succeeds, остальные получают 409 (гарантия непересечения) */
         post: operations["MeetingsApi_book"];
         delete?: never;
         options?: never;
@@ -131,7 +131,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Окно доступности на 14 дней для создаваемой встречи */
+        /** @description Окно доступности на 14 дней для создаваемой встречи; шаг стартов необязателен (без него = длительность) */
         get: operations["PreviewApi_availability"];
         put?: never;
         post?: never;
@@ -148,7 +148,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Сетка интервалов конкретного дня для создаваемой встречи */
+        /** @description Сетка интервалов конкретного дня для создаваемой встречи; шаг стартов необязателен (без него = длительность) */
         get: operations["PreviewApi_slots"];
         put?: never;
         post?: never;
@@ -239,6 +239,11 @@ export interface components {
              * @description Длительность интервала в минутах
              */
             durationMin: number;
+            /**
+             * Format: int32
+             * @description Шаг стартов сетки в минутах; отсутствие = длительность Встречи (ADR-0003)
+             */
+            startStepMin?: number;
             /** @description Email организатора: по нему проверяется занятость во всех его встречах */
             ownerEmail: string;
             /** @description Имя организатора, необязательное; видно посетителям */
@@ -264,6 +269,11 @@ export interface components {
             description?: string;
             /** Format: int32 */
             durationMin: number;
+            /**
+             * Format: int32
+             * @description Шаг стартов: целый 1..durationMin; отсутствие = длительность (422 при выходе за диапазон)
+             */
+            startStepMin?: number;
             ownerEmail: string;
             ownerName?: string;
             /** Format: date */
@@ -278,7 +288,7 @@ export interface components {
             status: components["schemas"]["SlotStatus"];
         };
         /** @enum {string} */
-        SlotStatus: "free" | "taken" | "past" | "tail";
+        SlotStatus: "free" | "taken" | "past";
         /** @description Границы рабочего дня 'HH:MM' */
         WorkHours: {
             /** Format: time */
@@ -593,6 +603,8 @@ export interface operations {
         parameters: {
             query: {
                 duration: number;
+                /** @description Шаг стартов: целый 1..duration, иначе 400 */
+                step?: number;
                 owner?: string;
             };
             header?: never;
@@ -627,6 +639,8 @@ export interface operations {
                 owner?: string;
                 date: string;
                 duration: number;
+                /** @description Шаг стартов: целый 1..duration, иначе 400 */
+                step?: number;
             };
             header?: never;
             path?: never;
