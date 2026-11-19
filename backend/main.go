@@ -316,7 +316,9 @@ func main() {
 	}
 	if len(store.Meetings("")) == 0 {
 		demoDate := time.Now().AddDate(0, 0, demo).Format("2006-01-02")
-		if _, err := store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, nil, "demo@calendar.app", "Демо-организатор", demoDate, "Europe/Moscow"); err != nil {
+		// Пустая зона: профиль Организатора для демо не заводим —
+		// встречи живут детерминированным UTC-дефолтом.
+		if _, err := store.CreateMeeting("Демо-звонок", "Пример встречи для пилота: 30-минутные интервалы", 30, nil, "demo@calendar.app", "Демо-организатор", demoDate, ""); err != nil {
 			log.Fatal(err)
 		}
 	}
